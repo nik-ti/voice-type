@@ -1,0 +1,44 @@
+# Xcode
+#
+build/
+DerivedData/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+project.xcworkspace/contents.xcworkspacedata
+
+# Swift Package Manager
+#
+.build/
+.swiftpm/
+Packages/
+Package.pins
+Package.resolved
+
+# macOS
+#
+.DS_Store
+*.swp
+*~.nib
+
+# User-specific
+#
+*.xcuserstate
+
+# VoiceType specific
+#
+history.sqlite
+history.sqlite-shm
+history.sqlite-wal
