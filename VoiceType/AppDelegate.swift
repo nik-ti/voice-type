@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Carbon.HIToolbox
+import Combine
 
 /// AppDelegate handles global hotkey registration and floating indicator window
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -14,6 +15,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     // Current hotkey state
     private var isHotkeyPressed = false
+    
+    // Audio level subscription
+    private var audioLevelCancellable: AnyCancellable?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Don't show app in dock
@@ -45,6 +49,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let monitor = flagsChangedMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        audioLevelCancellable?.cancel()
     }
     
     // MARK: - Floating Window Setup
@@ -55,7 +60,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Create borderless, floating window
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 120, height: 120),
+            contentRect: NSRect(x: 0, y: 0, width: 150, height: 150),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -66,7 +71,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = .clear
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.hasShadow = true
+        window.hasShadow = false
         window.ignoresMouseEvents = true
         
         // Position at bottom center of main screen
@@ -74,7 +79,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let screenFrame = screen.visibleFrame
             let windowFrame = window.frame
             let x = screenFrame.midX - windowFrame.width / 2
-            let y = screenFrame.minY + 100
+            let y = screenFrame.minY + 150
             window.setFrameOrigin(NSPoint(x: x, y: y))
         }
         
@@ -84,18 +89,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @MainActor
     func showFloatingIndicator() {
+        print("🔵 Showing floating indicator")
+        floatingHostingView?.rootView = FloatingIndicatorView(audioLevel: 0, isVisible: true)
         floatingWindow?.orderFront(nil)
+        
+        // Subscribe to audio level updates
+        if let appState = AppState.shared {
+            audioLevelCancellable = appState.audioCaptureService.$audioLevel
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] level in
+                    self?.floatingHostingView?.rootView = FloatingIndicatorView(audioLevel: level, isVisible: true)
+                }
+        }
     }
     
     @MainActor
     func hideFloatingIndicator() {
-        floatingWindow?.orderOut(nil)
-    }
-    
-    @MainActor
-    func updateFloatingIndicator(audioLevel: Float, isVisible: Bool) {
-        let contentView = FloatingIndicatorView(audioLevel: audioLevel, isVisible: isVisible)
-        floatingHostingView?.rootView = contentView
+        print("🔵 Hiding floating indicator")
+        audioLevelCancellable?.cancel()
+        audioLevelCancellable = nil
+        floatingHostingView?.rootView = FloatingIndicatorView(audioLevel: 0, isVisible: false)
+        
+        // Give animation time before hiding window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.floatingWindow?.orderOut(nil)
+        }
     }
     
     // MARK: - Accessibility Permission
@@ -105,7 +123,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let trusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
         
         if !trusted {
-            print("⚠️ Accessibility permission required for global hotkeys")
+            print("⚠️ Accessibility permission required for global hotkeys and auto-paste")
+        } else {
+            print("✅ Accessibility permission granted")
         }
     }
     
@@ -129,11 +149,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         keyUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyUp) { [weak self] event in
             self?.handleKeyUp(event)
         }
+        
+        print("✅ Global hotkey monitors registered")
     }
     
     private func handleFlagsChanged(_ event: NSEvent) {
         // Check for fn key press (secondary function key)
-        // fn key modifier flag is .function (bit 23)
         let fnKeyPressed = event.modifierFlags.contains(.function)
         
         // Get configured hotkey from UserDefaults
@@ -194,7 +215,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func triggerStartListening() {
         Task { @MainActor in
-            guard let appState = AppState.shared else { return }
+            guard let appState = AppState.shared else { 
+                print("❌ AppState.shared is nil")
+                return 
+            }
+            print("🎤 Starting listening via hotkey")
             appState.startListening()
             showFloatingIndicator()
         }
@@ -202,9 +227,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func triggerStopListening() {
         Task { @MainActor in
-            guard let appState = AppState.shared else { return }
-            await appState.stopListeningAndTranscribe()
+            guard let appState = AppState.shared else { 
+                print("❌ AppState.shared is nil")
+                return 
+            }
+            print("🎤 Stopping listening via hotkey")
             hideFloatingIndicator()
+            await appState.stopListeningAndTranscribe()
         }
     }
     

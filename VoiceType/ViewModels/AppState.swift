@@ -116,7 +116,12 @@ class AppState: ObservableObject {
             self.hotkeyMode = .fn
         }
         
-        self.autoPaste = UserDefaults.standard.bool(forKey: "autoPaste")
+        // Default to true for Whispr-like behavior
+        if UserDefaults.standard.object(forKey: "autoPaste") == nil {
+            self.autoPaste = true
+        } else {
+            self.autoPaste = UserDefaults.standard.bool(forKey: "autoPaste")
+        }
         self.launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
         
         // Set singleton reference
@@ -159,26 +164,38 @@ class AppState: ObservableObject {
     }
     
     func stopListeningAndTranscribe() async {
-        guard isListening else { return }
+        guard isListening else { 
+            print("⚠️ stopListeningAndTranscribe called but not listening")
+            return 
+        }
         
+        print("🎙️ Stopping recording and starting transcription...")
         isListening = false
         isTranscribing = true
         
         defer {
             isTranscribing = false
+            print("✅ Transcription process complete")
         }
         
         do {
             // Stop recording and get audio buffer
             guard let audioBuffer = audioCaptureService.stopRecording() else {
+                print("❌ No audio buffer returned from stopRecording")
                 showError("No audio was recorded")
                 return
             }
             
+            print("📊 Audio buffer: \(audioBuffer.frameLength) frames at \(audioBuffer.format.sampleRate)Hz")
+            
             // Transcribe
+            print("🔄 Starting transcription with language: \(selectedLanguage.displayName)")
             let text = try await transcriptionService.transcribe(audioBuffer, language: selectedLanguage)
             
+            print("📝 Transcription result: '\(text)'")
+            
             guard !text.isEmpty else {
+                print("⚠️ Transcription returned empty text")
                 showError("No speech detected")
                 return
             }
@@ -191,19 +208,23 @@ class AppState: ObservableObject {
                 text: text
             )
             try persistenceService.saveTranscription(transcription)
+            print("💾 Saved to history")
             
             // Update history
             loadHistory()
             
             // Copy to clipboard
             copyToClipboard(text)
+            print("📋 Copied to clipboard: '\(text)'")
             
             // Optionally paste
             if autoPaste {
+                print("📤 Auto-pasting...")
                 pasteFromClipboard()
             }
             
         } catch {
+            print("❌ Transcription error: \(error)")
             showError("Transcription failed: \(error.localizedDescription)")
         }
     }
@@ -227,18 +248,48 @@ class AppState: ObservableObject {
     }
     
     private func pasteFromClipboard() {
-        // Simulate Cmd+V
-        let source = CGEventSource(stateID: .hidSystemState)
+        // Get the text we just copied
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            print("❌ No text on clipboard to paste")
+            return
+        }
         
-        // Key down
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) // v key
-        keyDown?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
+        // Small delay to ensure focus is back to the target app
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            print("⌨️ Typing text directly: '\(text)'")
+            self.typeText(text)
+        }
+    }
+    
+    private func typeText(_ text: String) {
+        // Use the HID event tap which is the lowest level
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            print("❌ Failed to create HID event source")
+            return
+        }
         
-        // Key up
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-        keyUp?.flags = .maskCommand
-        keyUp?.post(tap: .cghidEventTap)
+        // Type each character using Unicode input
+        for char in text {
+            let utf16 = Array(String(char).utf16)
+            
+            // Create key events
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+                continue
+            }
+            
+            // Set the Unicode string on the key down event
+            keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+            
+            // Post to HID system
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            
+            // Small delay between characters
+            usleep(2000) // 2ms
+        }
+        
+        print("✅ Typed \(text.count) characters via HID")
     }
     
     // MARK: - History Management

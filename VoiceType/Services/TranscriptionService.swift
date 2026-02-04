@@ -58,6 +58,8 @@ class TranscriptionService: ObservableObject {
     // MARK: - Transcription
     
     func transcribe(_ audioBuffer: AVAudioPCMBuffer, language: TranscriptionLanguage) async throws -> String {
+        print("🔊 TranscriptionService.transcribe called")
+        
         await MainActor.run {
             self.isTranscribing = true
         }
@@ -70,23 +72,29 @@ class TranscriptionService: ObservableObject {
         
         #if canImport(FluidAudio)
         guard let asrManager = asrManager else {
+            print("❌ ASR Manager not initialized")
             throw TranscriptionError.modelNotLoaded
         }
         
         // Convert AVAudioPCMBuffer to [Float] samples
         let samples = extractSamples(from: audioBuffer)
         
+        print("📊 Extracted \(samples.count) samples from buffer")
+        
         guard !samples.isEmpty else {
+            print("❌ No samples extracted from buffer")
             throw TranscriptionError.emptyAudio
         }
         
         // Transcribe using FluidAudio
-        // Note: v3 model auto-detects language, but we can hint
+        print("🔄 Calling FluidAudio asrManager.transcribe with \(samples.count) samples...")
         let result = try await asrManager.transcribe(samples)
         
+        print("✅ FluidAudio returned: '\(result.text)'")
         return result.text
         #else
         // Mock transcription for development
+        print("⚠️ FluidAudio not available - using mock")
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
         return "[Mock transcription - FluidAudio not linked]"
         #endif
