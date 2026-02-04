@@ -1,90 +1,70 @@
 import SwiftUI
 
-/// Floating indicator shown when recording
+/// Elegant floating indicator - minimalist style with stop button for locked mode
 struct FloatingIndicatorView: View {
     let audioLevel: Float
     let isVisible: Bool
-    
-    @State private var isPulsing = false
+    let isLocked: Bool
+    var onStop: (() -> Void)? = nil
     
     var body: some View {
-        ZStack {
-            // Background blur
-            Circle()
-                .fill(.ultraThinMaterial)
-                .frame(width: 100, height: 100)
-            
-            // Pulsing rings based on audio level
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .stroke(
-                        LinearGradient(
-                            colors: [.blue.opacity(0.6), .purple.opacity(0.4)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 2
-                    )
-                    .frame(width: ringSize(for: index), height: ringSize(for: index))
-                    .opacity(ringOpacity(for: index))
-                    .scaleEffect(isPulsing ? 1.0 + CGFloat(audioLevel) * 0.2 : 1.0)
-                    .animation(
-                        .easeInOut(duration: 0.3).delay(Double(index) * 0.1),
-                        value: isPulsing
-                    )
+        HStack(spacing: 10) {
+            // Waveform bars
+            HStack(spacing: 2.5) {
+                ForEach(0..<10, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color.white.opacity(0.7))
+                        .frame(width: 2, height: 2)
+                        .scaleEffect(y: waveformScale(for: index), anchor: .center)
+                        .animation(
+                            .easeInOut(duration: 0.08),
+                            value: audioLevel
+                        )
+                }
             }
             
-            // Main microphone circle
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [.blue, .purple],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 60, height: 60)
-                .shadow(color: .blue.opacity(0.5), radius: 10, x: 0, y: 5)
-            
-            // Microphone icon
-            Image(systemName: "mic.fill")
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundColor(.white)
-            
-            // Audio level indicator (inner glow)
-            Circle()
-                .fill(.white.opacity(Double(audioLevel) * 0.3))
-                .frame(width: 60, height: 60)
-                .blur(radius: 5)
+            // Stop button - only shows in locked mode
+            if isLocked {
+                Button(action: { onStop?() }) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.red)
+                        .frame(width: 14, height: 14)
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            Capsule()
+                .fill(Color(white: 0.12))
+        )
         .opacity(isVisible ? 1 : 0)
-        .scaleEffect(isVisible ? 1 : 0.5)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
-        .onAppear {
-            startPulsingAnimation()
-        }
+        .scaleEffect(isVisible ? 1 : 0.9)
+        .animation(.easeOut(duration: 0.2), value: isVisible)
+        .animation(.easeOut(duration: 0.15), value: isLocked)
     }
     
-    private func ringSize(for index: Int) -> CGFloat {
-        return 70 + CGFloat(index) * 15
-    }
-    
-    private func ringOpacity(for index: Int) -> Double {
-        let baseOpacity = 0.5 - Double(index) * 0.15
-        return baseOpacity + Double(audioLevel) * 0.3
-    }
-    
-    private func startPulsingAnimation() {
-        withAnimation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)) {
-            isPulsing = true
-        }
+    private func waveformScale(for index: Int) -> CGFloat {
+        let baseScale: CGFloat = 1.0
+        let maxScale: CGFloat = 5.0
+        
+        let centerOffset = abs(CGFloat(index) - 4.5) / 4.5
+        let wave = sin(CGFloat(index) * 0.9 + CGFloat(audioLevel) * 15)
+        let scale = baseScale + (maxScale - baseScale) * CGFloat(audioLevel) * (1.0 - centerOffset * 0.3) * (0.5 + wave * 0.5)
+        
+        return max(1.0, min(maxScale, scale))
     }
 }
 
 #Preview {
     ZStack {
-        Color.black.opacity(0.3)
-        FloatingIndicatorView(audioLevel: 0.5, isVisible: true)
+        Color.gray
+        VStack(spacing: 20) {
+            FloatingIndicatorView(audioLevel: 0.3, isVisible: true, isLocked: false)
+            FloatingIndicatorView(audioLevel: 0.5, isVisible: true, isLocked: true)
+        }
     }
-    .frame(width: 200, height: 200)
+    .frame(width: 200, height: 150)
 }
