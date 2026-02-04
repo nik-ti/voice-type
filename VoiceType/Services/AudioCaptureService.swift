@@ -14,6 +14,9 @@ class AudioCaptureService: ObservableObject {
     // Target sample rate for Parakeet (16kHz)
     private let targetSampleRate: Double = 16000
     
+    // Lock for thread-safe sample access
+    private let samplesLock = NSLock()
+    
     // MARK: - Permission
     
     func requestMicrophonePermission() async -> Bool {
@@ -38,33 +41,58 @@ class AudioCaptureService: ObservableObject {
     func startRecording() throws {
         guard !isRecording else { return }
         
+        // Reset samples
+        samplesLock.lock()
         audioSamples = []
+        samplesLock.unlock()
         
+        // Create a new audio engine
         let audioEngine = AVAudioEngine()
         let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+        
+        // Get the hardware format - this triggers hardware initialization
+        let hardwareFormat = inputNode.inputFormat(forBus: 0)
         
         // Verify we have a valid format
-        guard inputFormat.sampleRate > 0 else {
+        guard hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0 else {
+            throw AudioCaptureError.invalidFormat
+        }
+        
+        // Use a recording format that's compatible with the hardware
+        guard let recordingFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: hardwareFormat.sampleRate,
+            channels: 1,
+            interleaved: false
+        ) else {
             throw AudioCaptureError.invalidFormat
         }
         
         // Calculate buffer size (100ms of audio)
-        let bufferSize = AVAudioFrameCount(inputFormat.sampleRate * 0.1)
+        let bufferSize = AVAudioFrameCount(recordingFormat.sampleRate * 0.1)
         
-        // Install tap on input node
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: inputFormat) { [weak self] buffer, time in
-            self?.processAudioBuffer(buffer, inputFormat: inputFormat)
+        // Install tap on input node with the recording format
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: recordingFormat) { [weak self] buffer, time in
+            self?.processAudioBuffer(buffer, inputSampleRate: recordingFormat.sampleRate)
         }
         
+        // Prepare and start with error handling
         audioEngine.prepare()
-        try audioEngine.start()
+        
+        do {
+            try audioEngine.start()
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            throw AudioCaptureError.recordingFailed
+        }
         
         self.audioEngine = audioEngine
         
         DispatchQueue.main.async {
             self.isRecording = true
         }
+        
+        print("✅ Audio recording started at \(recordingFormat.sampleRate)Hz")
     }
     
     func stopRecording() -> AVAudioPCMBuffer? {
@@ -83,16 +111,26 @@ class AudioCaptureService: ObservableObject {
             self.audioLevel = 0.0
         }
         
+        // Get samples thread-safely
+        samplesLock.lock()
+        let samples = audioSamples
+        audioSamples = []
+        samplesLock.unlock()
+        
+        print("✅ Audio recording stopped, captured \(samples.count) samples")
+        
         // Convert collected samples to buffer at target sample rate
-        return createAudioBuffer(from: audioSamples)
+        return createAudioBuffer(from: samples)
     }
     
     // MARK: - Audio Processing
     
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
+    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, inputSampleRate: Double) {
         guard let channelData = buffer.floatChannelData else { return }
         
         let frameCount = Int(buffer.frameLength)
+        guard frameCount > 0 else { return }
+        
         let channelDataPtr = channelData[0]
         
         // Calculate audio level (RMS)
@@ -108,7 +146,8 @@ class AudioCaptureService: ObservableObject {
         }
         
         // Resample to 16kHz if needed
-        let inputSampleRate = inputFormat.sampleRate
+        var newSamples: [Float] = []
+        
         if inputSampleRate != targetSampleRate {
             let resampleRatio = targetSampleRate / inputSampleRate
             let resampledCount = Int(Double(frameCount) * resampleRatio)
@@ -116,15 +155,20 @@ class AudioCaptureService: ObservableObject {
             for i in 0..<resampledCount {
                 let sourceIndex = Int(Double(i) / resampleRatio)
                 if sourceIndex < frameCount {
-                    audioSamples.append(channelDataPtr[sourceIndex])
+                    newSamples.append(channelDataPtr[sourceIndex])
                 }
             }
         } else {
             // Already at target sample rate
             for i in 0..<frameCount {
-                audioSamples.append(channelDataPtr[i])
+                newSamples.append(channelDataPtr[i])
             }
         }
+        
+        // Thread-safe append
+        samplesLock.lock()
+        audioSamples.append(contentsOf: newSamples)
+        samplesLock.unlock()
     }
     
     private func createAudioBuffer(from samples: [Float]) -> AVAudioPCMBuffer? {
@@ -167,11 +211,11 @@ enum AudioCaptureError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidFormat:
-            return "Invalid audio format"
+            return "Invalid audio format - please check your microphone"
         case .noPermission:
             return "Microphone permission denied"
         case .recordingFailed:
-            return "Failed to start recording"
+            return "Failed to start recording - please check your microphone settings"
         }
     }
 }
