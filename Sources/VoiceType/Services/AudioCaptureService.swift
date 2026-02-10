@@ -6,6 +6,7 @@ import Combine
 class AudioCaptureService: ObservableObject {
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
+    @Published var recordingElapsed: TimeInterval = 0.0
     
     private var audioEngine: AVAudioEngine?
     private var audioBuffer: AVAudioPCMBuffer?
@@ -14,8 +15,30 @@ class AudioCaptureService: ObservableObject {
     // Target sample rate for Parakeet (16kHz)
     private let targetSampleRate: Double = 16000
     
+    // Recording time limit (2 minutes)
+    let maxRecordingDuration: TimeInterval = 120.0
+    private let warningBeforeEnd: TimeInterval = 15.0  // Warn at 1:45
+    private var recordingStartTime: Date?
+    private var recordingTimer: DispatchSourceTimer?
+    private var warningFired = false
+    
+    // Silence detection: track peak audio level during recording
+    private(set) var peakAudioLevel: Float = 0.0
+    private let silenceThreshold: Float = 0.02  // Below this = silence
+    
+    /// True if the recording contained actual speech (peak above silence threshold)
+    var hadSpeech: Bool { peakAudioLevel > silenceThreshold }
+    
+    // Callbacks for time events
+    var onTimeWarning: (() -> Void)?   // Called at 1:45
+    var onTimeLimit: (() -> Void)?     // Called at 2:00
+    var onAudioInterruption: (() -> Void)?  // Called on mic disconnect
+    
     // Lock for thread-safe sample access
     private let samplesLock = NSLock()
+    
+    // Audio engine observer
+    private var configObserver: NSObjectProtocol?
     
     // MARK: - Permission
     
@@ -88,8 +111,16 @@ class AudioCaptureService: ObservableObject {
         
         self.audioEngine = audioEngine
         
+        // Start recording timer
+        recordingStartTime = Date()
+        warningFired = false
+        peakAudioLevel = 0.0  // Reset silence detection
+        startRecordingTimer()
+        observeAudioEngineInterruption()
+        
         DispatchQueue.main.async {
             self.isRecording = true
+            self.recordingElapsed = 0.0
         }
         
         print("✅ Audio recording started at \(recordingFormat.sampleRate)Hz")
@@ -100,6 +131,10 @@ class AudioCaptureService: ObservableObject {
             return nil
         }
         
+        // Stop timer and observers
+        stopRecordingTimer()
+        removeAudioEngineObserver()
+        
         // Remove tap and stop engine
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
@@ -109,6 +144,7 @@ class AudioCaptureService: ObservableObject {
         DispatchQueue.main.async {
             self.isRecording = false
             self.audioLevel = 0.0
+            self.recordingElapsed = 0.0
         }
         
         // Get samples thread-safely
@@ -117,10 +153,44 @@ class AudioCaptureService: ObservableObject {
         audioSamples = []
         samplesLock.unlock()
         
-        print("✅ Audio recording stopped, captured \(samples.count) samples")
+        print("✅ Audio recording stopped, captured \(samples.count) samples, peak=\(String(format: "%.3f", peakAudioLevel))")
         
         // Convert collected samples to buffer at target sample rate
         return createAudioBuffer(from: samples)
+    }
+    
+    // MARK: - Recording Timer
+    
+    private func startRecordingTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1, repeating: 1.0)
+        timer.setEventHandler { [weak self] in
+            guard let self = self, let start = self.recordingStartTime else { return }
+            let elapsed = Date().timeIntervalSince(start)
+            self.recordingElapsed = elapsed
+            
+            // Warning at warningBeforeEnd seconds before limit
+            let warningTime = self.maxRecordingDuration - self.warningBeforeEnd
+            if elapsed >= warningTime && !self.warningFired {
+                self.warningFired = true
+                print("⚠️ Recording time warning: \(Int(self.warningBeforeEnd))s remaining")
+                self.onTimeWarning?()
+            }
+            
+            // Hard limit
+            if elapsed >= self.maxRecordingDuration {
+                print("⏱️ Recording time limit reached (\(Int(self.maxRecordingDuration))s)")
+                self.onTimeLimit?()
+            }
+        }
+        timer.resume()
+        self.recordingTimer = timer
+    }
+    
+    private func stopRecordingTimer() {
+        recordingTimer?.cancel()
+        recordingTimer = nil
+        recordingStartTime = nil
     }
     
     // MARK: - Audio Processing
@@ -141,8 +211,14 @@ class AudioCaptureService: ObservableObject {
         let rms = sqrt(sum / Float(frameCount))
         
         // Update audio level on main thread
+        let scaledLevel = min(1.0, rms * 50)
         DispatchQueue.main.async {
-            self.audioLevel = min(1.0, rms * 10) // Scale for visualization
+            self.audioLevel = scaledLevel
+        }
+        
+        // Track peak for silence detection (thread-safe since Float write is atomic on ARM)
+        if rms > self.peakAudioLevel {
+            self.peakAudioLevel = rms
         }
         
         // Resample to 16kHz if needed
@@ -198,6 +274,28 @@ class AudioCaptureService: ObservableObject {
         }
         
         return buffer
+    }
+    
+    // MARK: - Audio Engine Recovery
+    
+    private func observeAudioEngineInterruption() {
+        guard let engine = audioEngine else { return }
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            print("⚠️ Audio engine configuration changed (mic disconnected?)")
+            self.onAudioInterruption?()
+        }
+    }
+    
+    private func removeAudioEngineObserver() {
+        if let observer = configObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configObserver = nil
+        }
     }
 }
 

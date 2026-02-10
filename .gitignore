@@ -42,3 +42,10 @@ Package.resolved
 history.sqlite
 history.sqlite-shm
 history.sqlite-wal
+README.md
+PRODUCTION_GUIDE.md
+AGENT.MD
+temp_metal_build/
+compile_mlx.sh
+VoiceType.app/
+*.dmg

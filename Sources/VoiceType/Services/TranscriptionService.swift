@@ -11,9 +11,11 @@ class TranscriptionService: ObservableObject {
     @Published var isTranscribing = false
     @Published var loadingProgress: Double = 0.0
     
+    
     #if canImport(FluidAudio)
     private var asrModels: AsrModels?
     private var asrManager: AsrManager?
+    private var audioConverter: AudioConverter?
     #endif
     
     // MARK: - Model Loading
@@ -37,6 +39,9 @@ class TranscriptionService: ObservableObject {
         let manager = AsrManager(config: .default)
         try await manager.initialize(models: models)
         
+        // Initialize AudioConverter for proper format conversion (16kHz mono Float32)
+        self.audioConverter = AudioConverter()
+        
         self.asrModels = models
         self.asrManager = manager
         
@@ -59,6 +64,7 @@ class TranscriptionService: ObservableObject {
     
     func transcribe(_ audioBuffer: AVAudioPCMBuffer, language: TranscriptionLanguage) async throws -> String {
         print("🔊 TranscriptionService.transcribe called")
+        print("📊 Input buffer: \(audioBuffer.frameLength) frames at \(audioBuffer.format.sampleRate)Hz, \(audioBuffer.format.channelCount) channels")
         
         await MainActor.run {
             self.isTranscribing = true
@@ -76,13 +82,37 @@ class TranscriptionService: ObservableObject {
             throw TranscriptionError.modelNotLoaded
         }
         
-        // Convert AVAudioPCMBuffer to [Float] samples
-        let samples = extractSamples(from: audioBuffer)
+        guard let audioConverter = audioConverter else {
+            print("❌ AudioConverter not initialized")
+            throw TranscriptionError.modelNotLoaded
+        }
         
-        print("📊 Extracted \(samples.count) samples from buffer")
+        // Validate buffer before conversion
+        guard audioBuffer.frameLength > 0 else {
+            print("❌ Audio buffer is empty")
+            throw TranscriptionError.emptyAudio
+        }
+        
+        guard audioBuffer.format.sampleRate > 0 && audioBuffer.format.channelCount > 0 else {
+            print("❌ Invalid audio format: sampleRate=\(audioBuffer.format.sampleRate), channels=\(audioBuffer.format.channelCount)")
+            throw TranscriptionError.invalidFormat
+        }
+        
+        // Use AudioConverter to ensure proper 16kHz mono Float32 format
+        // This is CRITICAL - manual extraction can cause "empty transcripts" per FluidAudio docs
+        print("🔄 Converting audio to 16kHz mono Float32...")
+        let samples: [Float]
+        do {
+            samples = try audioConverter.resampleBuffer(audioBuffer)
+        } catch {
+            print("❌ Audio conversion failed: \(error.localizedDescription)")
+            throw TranscriptionError.conversionFailed(error.localizedDescription)
+        }
+        
+        print("📊 Converted to \(samples.count) samples at 16kHz mono")
         
         guard !samples.isEmpty else {
-            print("❌ No samples extracted from buffer")
+            print("❌ No samples after conversion")
             throw TranscriptionError.emptyAudio
         }
         
@@ -99,21 +129,6 @@ class TranscriptionService: ObservableObject {
         return "[Mock transcription - FluidAudio not linked]"
         #endif
     }
-    
-    // MARK: - Helper Methods
-    
-    private func extractSamples(from buffer: AVAudioPCMBuffer) -> [Float] {
-        guard let channelData = buffer.floatChannelData else { return [] }
-        
-        let frameCount = Int(buffer.frameLength)
-        var samples = [Float](repeating: 0, count: frameCount)
-        
-        for i in 0..<frameCount {
-            samples[i] = channelData[0][i]
-        }
-        
-        return samples
-    }
 }
 
 // MARK: - Errors
@@ -121,6 +136,8 @@ class TranscriptionService: ObservableObject {
 enum TranscriptionError: LocalizedError {
     case modelNotLoaded
     case emptyAudio
+    case invalidFormat
+    case conversionFailed(String)
     case transcriptionFailed(String)
     
     var errorDescription: String? {
@@ -129,6 +146,10 @@ enum TranscriptionError: LocalizedError {
             return "Transcription model not loaded"
         case .emptyAudio:
             return "No audio to transcribe"
+        case .invalidFormat:
+            return "Invalid audio format"
+        case .conversionFailed(let reason):
+            return "Audio conversion failed: \(reason)"
         case .transcriptionFailed(let reason):
             return "Transcription failed: \(reason)"
         }

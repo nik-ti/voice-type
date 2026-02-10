@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 import AppKit
 import ServiceManagement
+import UserNotifications
 
 /// Supported languages for transcription
 enum TranscriptionLanguage: String, CaseIterable, Codable {
@@ -58,6 +59,19 @@ class AppState: ObservableObject {
         }
     }
     
+    @Published var isPolishedMode: Bool {
+        didSet {
+            UserDefaults.standard.set(isPolishedMode, forKey: "isPolishedMode")
+            if isPolishedMode {
+                Task { await LLMService.shared.loadModel() }
+            } else {
+                LLMService.shared.unloadModel()
+            }
+        }
+    }
+    
+    @Published var isPolishing = false
+    
     @Published var hotkeyMode: HotkeyMode {
         didSet {
             UserDefaults.standard.set(hotkeyMode.rawValue, forKey: "hotkeyMode")
@@ -82,6 +96,9 @@ class AppState: ObservableObject {
     
     @Published var transcriptionHistory: [Transcription] = []
     @Published var searchText = ""
+    
+    // Paste safety: prevent double-paste
+    private var isPasting = false
     
     // MARK: - Services
     
@@ -109,6 +126,8 @@ class AppState: ObservableObject {
             self.selectedLanguage = .english
         }
         
+        self.isPolishedMode = UserDefaults.standard.bool(forKey: "isPolishedMode")
+        
         if let modeString = UserDefaults.standard.string(forKey: "hotkeyMode"),
            let mode = HotkeyMode(rawValue: modeString) {
             self.hotkeyMode = mode
@@ -132,6 +151,11 @@ class AppState: ObservableObject {
         
         // Setup audio level monitoring
         setupAudioLevelMonitoring()
+        
+        // Preload LLM if polished mode enabled
+        if isPolishedMode {
+            Task { await LLMService.shared.loadModel() }
+        }
     }
     
     // MARK: - Audio Level Monitoring
@@ -145,7 +169,17 @@ class AppState: ObservableObject {
     // MARK: - Listening Control
     
     func startListening() {
-        guard !isListening else { return }
+        guard !isListening else {
+            print("⚠️ startListening ignored: already listening")
+            return
+        }
+        
+        // If transcription is stuck, reset it
+        if isTranscribing {
+            print("⚠️ isTranscribing was stuck true, resetting...")
+            isTranscribing = false
+            isPolishing = false
+        }
         
         Task {
             do {
@@ -155,9 +189,13 @@ class AppState: ObservableObject {
                     return
                 }
                 
+                print("🎤️ Starting audio recording...")
                 try audioCaptureService.startRecording()
                 isListening = true
+                playStartSound()
+                print("✅ Now listening")
             } catch {
+                print("❌ Failed to start recording: \(error)")
                 showError("Failed to start recording: \(error.localizedDescription)")
             }
         }
@@ -172,11 +210,14 @@ class AppState: ObservableObject {
         print("🎙️ Stopping recording and starting transcription...")
         isListening = false
         isTranscribing = true
+        playStopSound()
         
         defer {
             isTranscribing = false
+            isPolishing = false
             print("✅ Transcription process complete")
         }
+        
         
         do {
             // Stop recording and get audio buffer
@@ -188,24 +229,80 @@ class AppState: ObservableObject {
             
             print("📊 Audio buffer: \(audioBuffer.frameLength) frames at \(audioBuffer.format.sampleRate)Hz")
             
-            // Transcribe
-            print("🔄 Starting transcription with language: \(selectedLanguage.displayName)")
-            let text = try await transcriptionService.transcribe(audioBuffer, language: selectedLanguage)
-            
-            print("📝 Transcription result: '\(text)'")
-            
-            guard !text.isEmpty else {
-                print("⚠️ Transcription returned empty text")
-                showError("No speech detected")
+            // Silence detection: skip if no actual speech was detected
+            if !audioCaptureService.hadSpeech {
+                print("🤫 Silence detected (peak=\(String(format: "%.3f", audioCaptureService.peakAudioLevel))), skipping transcription")
                 return
             }
+            
+            // Transcribe with comprehensive error handling
+            print("🔄 Starting transcription with language: \(selectedLanguage.displayName)")
+            let text: String
+            do {
+                text = try await transcriptionService.transcribe(audioBuffer, language: selectedLanguage)
+            } catch let error as TranscriptionError {
+                // Handle specific transcription errors with user-friendly messages
+                switch error {
+                case .modelNotLoaded:
+                    print("❌ Transcription model not loaded")
+                    showError("Speech model not ready. Please wait a moment and try again.")
+                case .emptyAudio:
+                    print("❌ Empty audio buffer")
+                    showError("No audio detected. Please speak louder or check your microphone.")
+                case .invalidFormat:
+                    print("❌ Invalid audio format")
+                    showError("Microphone format issue. Try unplugging and reconnecting your mic.")
+                case .conversionFailed(let reason):
+                    print("❌ Audio conversion failed: \(reason)")
+                    showError("Audio processing failed: \(reason)")
+                case .transcriptionFailed(let reason):
+                    print("❌ Transcription failed: \(reason)")
+                    showError("Transcription failed: \(reason)")
+                }
+                return
+            } catch {
+                // Catch-all for unexpected errors
+                print("❌ Unexpected transcription error: \(error.localizedDescription)")
+                showError("Transcription failed: \(error.localizedDescription)")
+                return
+            }
+            
+            print("✅ Transcription result: '\(text)'")
+            
+            if text.isEmpty {
+                print("⚠️ Transcription returned empty text")
+                showError("No speech detected. Please try again.")
+                return
+            }
+            
+            var finalText = text
+            
+            // Always apply basic formatting (instant, rule-based)
+            finalText = LLMService.shared.basicFormat(text)
+            print("📝 Basic format: '\(finalText)'")
+            
+            // Polished Mode (GRMR with filler removal)
+            if isPolishedMode {
+                await MainActor.run { self.isPolishing = true }
+                print("✨ Polishing text...")
+                do {
+                    finalText = try await LLMService.shared.processPolished(text)
+                    print("✨ Polished result: '\(finalText)'")
+                } catch {
+                    print("⚠️ Polish failed: \(error), using basic format")
+                    // Fallback already applied above
+                }
+                await MainActor.run { self.isPolishing = false }
+            }
+            
+            // (isTranscribing and isPolishing reset by defer)
             
             // Save to history
             let transcription = Transcription(
                 id: UUID(),
                 timestamp: Date(),
                 language: selectedLanguage.rawValue,
-                text: text
+                text: finalText
             )
             try persistenceService.saveTranscription(transcription)
             print("💾 Saved to history")
@@ -214,10 +311,14 @@ class AppState: ObservableObject {
             loadHistory()
             
             // Copy to clipboard
-            copyToClipboard(text)
-            print("📋 Copied to clipboard: '\(text)'")
+            copyToClipboard(finalText)
+            print("📋 Copied to clipboard: '\(finalText)'")
             
             // Optionally paste
+            // Check if we need to restore focus first (handled in AppDelegate for stop button, but what about auto?)
+            // If the user clicked "Stop" in MenuBar, focus might be lost.
+            // But usually this flow is triggered by Hotkey/Button which handles focus.
+            
             if autoPaste {
                 print("📤 Auto-pasting...")
                 pasteFromClipboard()
@@ -227,6 +328,16 @@ class AppState: ObservableObject {
             print("❌ Transcription error: \(error)")
             showError("Transcription failed: \(error.localizedDescription)")
         }
+    }
+    
+    // MARK: - Sound Feedback
+    
+    private func playStartSound() {
+        NSSound(named: "Tink")?.play()
+    }
+    
+    private func playStopSound() {
+        NSSound(named: "Pop")?.play()
     }
     
     func toggleListening() {
@@ -248,48 +359,92 @@ class AppState: ObservableObject {
     }
     
     private func pasteFromClipboard() {
-        // Get the text we just copied
+        // Prevent double-paste
+        guard !isPasting else {
+            print("⚠️ Paste already in progress, skipping")
+            return
+        }
+        isPasting = true
+        
+        // Get the text we just copied (sanity check)
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
             print("❌ No text on clipboard to paste")
+            isPasting = false
             return
         }
         
-        // Small delay to ensure focus is back to the target app
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            print("⌨️ Typing text directly: '\(text)'")
-            self.typeText(text)
+        // Re-activate the target app — during LLM processing it may have lost focus
+        if let appDelegate = NSApplication.shared.delegate as? AppDelegate,
+           let targetApp = appDelegate.previousApp {
+            print("📱 Re-activating target app: \(targetApp.localizedName ?? "unknown")")
+            targetApp.activate()
+        }
+        
+        // Delay: focus restoration + floating window hide animation need time to complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            print("📤 Simulating Command+V...")
+            self.simulatePasteCommand()
+            
+            // Reset paste flag after a short delay to prevent re-entry
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.isPasting = false
+            }
         }
     }
     
-    private func typeText(_ text: String) {
-        // Use the HID event tap which is the lowest level
-        guard let source = CGEventSource(stateID: .hidSystemState) else {
-            print("❌ Failed to create HID event source")
+    private func simulatePasteCommand() {
+        // Use AppleScript to reliably send Command+V
+        // This is more robust than CGEvent for global shortcuts
+        let scriptSource = """
+        tell application "System Events"
+            keystroke "v" using command down
+        end tell
+        """
+        
+        var error: NSDictionary?
+        if let script = NSAppleScript(source: scriptSource) {
+            script.executeAndReturnError(&error)
+            if let error = error {
+                print("❌ AppleScript Paste Error: \(error)")
+                // Fallback to CGEvent if AppleScript fails
+                fallbackPaste()
+            } else {
+                print("✅ Pasted via AppleScript")
+            }
+        }
+    }
+    
+    private func fallbackPaste() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let vKeyCode: CGKeyCode = 9 // 'v' key
+        let cmdFlag = CGEventFlags.maskCommand
+        
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else {
+            showCopiedNotification()
             return
         }
         
-        // Type each character using Unicode input
-        for char in text {
-            let utf16 = Array(String(char).utf16)
-            
-            // Create key events
-            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-                continue
-            }
-            
-            // Set the Unicode string on the key down event
-            keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
-            
-            // Post to HID system
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
-            
-            // Small delay between characters
-            usleep(2000) // 2ms
-        }
+        keyDown.flags = cmdFlag
+        keyUp.flags = cmdFlag
         
-        print("✅ Typed \(text.count) characters via HID")
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        print("⚠️ Used Fallback CGEvent Paste")
+    }
+    
+    private func showCopiedNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "VoiceType"
+        content.body = "Text copied to clipboard — paste with ⌘V"
+        content.sound = .default
+        
+        let request = UNNotificationRequest(
+            identifier: "paste-fallback-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { _ in }
     }
     
     // MARK: - History Management

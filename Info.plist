@@ -32,8 +32,6 @@
 	<string>Copyright © 2026. All rights reserved.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>VoiceType needs access to your microphone to transcribe your speech.</string>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>VoiceType uses AppleScript to paste text into other applications.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

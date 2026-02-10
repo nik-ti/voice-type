@@ -13,6 +13,7 @@ struct VoiceTypeApp: App {
             MenuBarView()
                 .environmentObject(appState)
         } label: {
+            // Revert to system icon - custom assets missing
             Image(systemName: appState.isListening ? "mic.fill" : "mic")
                 .symbolRenderingMode(.hierarchical)
         }

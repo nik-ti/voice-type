@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Carbon.HIToolbox
 import Combine
+import UserNotifications
 
 /// AppDelegate handles global hotkey registration and floating indicator window
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -20,7 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var audioLevelCancellable: AnyCancellable?
     
     // Store the app that was active before recording
-    private var previousApp: NSRunningApplication?
+    var previousApp: NSRunningApplication?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Don't show app in dock
@@ -32,8 +33,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Request accessibility permission for global hotkeys
         requestAccessibilityPermission()
         
+        // Request notification permission for time warnings
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        
         // Register global hotkey monitor
         registerGlobalHotkeyMonitor()
+        
+        // Setup recording time limit callbacks
+        setupRecordingCallbacks()
         
         // Load models in background
         Task { @MainActor in
@@ -170,77 +177,100 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerGlobalHotkeyMonitor() {
         // Monitor for fn key (flags changed)
         flagsChangedMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            self?.handleFlagsChanged(event)
+            Task { @MainActor in
+                self?.handleFlagsChanged(event)
+            }
         }
         
         // Also monitor for custom key combinations
         keyDownMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKeyDown(event)
+            Task { @MainActor in
+                self?.handleKeyDown(event)
+            }
         }
         
+        // keyUp is empty but let's be consistent
         keyUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyUp) { [weak self] event in
-            self?.handleKeyUp(event)
+             Task { @MainActor in
+                self?.handleKeyUp(event)
+            }
         }
         
         print("✅ Global hotkey monitors registered")
     }
     
+    @MainActor
     private func handleFlagsChanged(_ event: NSEvent) {
+        // Get current mode
+        guard let appState = AppState.shared else { return }
+        let mode = appState.hotkeyMode
+        
         let fnKeyPressed = event.modifierFlags.contains(.function)
         let optionKeyPressed = event.modifierFlags.contains(.option)
         
-        // fn + Option: Toggle lock mode
-        if fnKeyPressed && optionKeyPressed && !isLockedMode {
-            print("🔒 Locked mode activated (fn+Option)")
-            isLockedMode = true
-            if !isHotkeyPressed {
+        // Mode 1: Function Key (Fn)
+        if mode == .fn {
+            // fn + Option: Toggle lock mode (Special case always allowed)
+            if fnKeyPressed && optionKeyPressed && !isLockedMode {
+                print("🔒 Locked mode activated (fn+Option)")
+                isLockedMode = true
+                if !isHotkeyPressed {
+                    isHotkeyPressed = true
+                    triggerStartListening()
+                }
+                return
+            }
+            
+            // Option alone (no fn): Exit locked mode
+            if optionKeyPressed && !fnKeyPressed && isLockedMode {
+                print("🔓 Locked mode deactivated (Option)")
+                isLockedMode = false
+                isHotkeyPressed = false
+                triggerStopListening()
+                return
+            }
+            
+            // Skip routine handling if locked
+            if isLockedMode { return }
+            
+            // Standard Fn Hold-to-speak
+            if fnKeyPressed && !optionKeyPressed && !isHotkeyPressed {
                 isHotkeyPressed = true
                 triggerStartListening()
+            } else if !fnKeyPressed && isHotkeyPressed {
+                isHotkeyPressed = false
+                triggerStopListening()
             }
-            return
         }
         
-        // Option alone (no fn): Exit locked mode
-        if optionKeyPressed && !fnKeyPressed && isLockedMode {
-            print("🔓 Locked mode deactivated (Option)")
-            isLockedMode = false
-            isHotkeyPressed = false
-            triggerStopListening()
-            return
-        }
-        
-        // Skip normal fn handling if in locked mode
-        if isLockedMode {
-            return
-        }
-        
-        // Hold-to-speak: fn key only (no Option)
-        if fnKeyPressed && !optionKeyPressed && !isHotkeyPressed {
-            isHotkeyPressed = true
-            triggerStartListening()
-        } else if !fnKeyPressed && isHotkeyPressed {
-            isHotkeyPressed = false
-            triggerStopListening()
+        // Mode 2: Option + Space (Flags part - check Option key release)
+        if mode == .optionSpace {
+            // If Option is released while recording, stop
+            if !optionKeyPressed && isHotkeyPressed {
+                print("⌨️ Option released, stopping")
+                isHotkeyPressed = false
+                triggerStopListening()
+            }
         }
     }
     
+    @MainActor
     private func handleKeyDown(_ event: NSEvent) {
-        print("⌨️ KeyDown: keyCode=\(event.keyCode), fn=\(event.modifierFlags.contains(.function)), locked=\(isLockedMode)")
+        // Get current mode
+        guard let appState = AppState.shared else { return }
+        let mode = appState.hotkeyMode
         
-        // fn+space: Toggle lock mode
+        print("⌨️ KeyDown: keyCode=\(event.keyCode), mode=\(mode)")
+        
+        // Special: fn+space toggle lock (Always available as backup)
         if event.modifierFlags.contains(.function) && event.keyCode == 49 { // 49 = space
             if !isLockedMode {
-                // Enter locked mode - keep recording even after fn is released
-                print("🔒 Locked mode activated (fn+space)")
                 isLockedMode = true
-                // If not already recording, start now
                 if !isHotkeyPressed {
                     isHotkeyPressed = true
                     triggerStartListening()
                 }
             } else {
-                // Already locked - toggle off
-                print("🔓 Locked mode deactivated (fn+space toggle)")
                 isLockedMode = false
                 isHotkeyPressed = false
                 triggerStopListening()
@@ -248,9 +278,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         
-        // Escape: Stop if in locked mode
-        if event.keyCode == 53 && isLockedMode { // 53 = Escape
-            print("🔓 Locked mode deactivated (Escape)")
+        // Mode 2: Option + Space (Hold)
+        if mode == .optionSpace {
+            if event.modifierFlags.contains(.option) && event.keyCode == 49 { // Option + Space
+                if !isHotkeyPressed {
+                    print("⌨️ Option+Space pressed, starting")
+                    isHotkeyPressed = true
+                    triggerStartListening()
+                }
+            }
+        }
+        
+        // Mode 3: Toggle Key (Using F5 as toggle for now, can be configured)
+        if mode == .toggle {
+            if event.keyCode == 96 { // F5 key usually (check keycode map)
+                // Actually let's use Control+Space for toggle since F keys are tricky
+            }
+            
+            // Let's use Right Command for toggle for now as a simple placeholder
+            // Or better, stick to Option+Space but as a toggle
+             if event.modifierFlags.contains(.option) && event.keyCode == 49 {
+                if !isHotkeyPressed {
+                    isHotkeyPressed = true
+                    triggerStartListening()
+                } else {
+                    isHotkeyPressed = false
+                    triggerStopListening()
+                }
+            }
+        }
+        
+        // Escape: Stop anything
+        if event.keyCode == 53 && (isLockedMode || isHotkeyPressed) { // 53 = Escape
+            print("🛑 Escape pressed, stopping all")
             isLockedMode = false
             isHotkeyPressed = false
             triggerStopListening()
@@ -281,6 +341,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func triggerStopListening() {
+        // Restore focus to the previous app FIRST (before hiding indicator)
+        // This covers ALL stop paths: Fn release, Option release, Escape, locked mode
+        if let app = previousApp {
+            print("📱 Restoring focus to: \(app.localizedName ?? "unknown")")
+            app.activate()
+        }
+        
         Task { @MainActor in
             guard let appState = AppState.shared else { 
                 print("❌ AppState.shared is nil")
@@ -304,6 +371,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             print("❌ Failed to load transcription models: \(error)")
             appState.showError("Failed to load transcription model: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Recording Time Limit
+    
+    @MainActor
+    private func setupRecordingCallbacks() {
+        guard let appState = AppState.shared else { return }
+        
+        // Warning at 15 seconds before limit
+        appState.audioCaptureService.onTimeWarning = {
+            let content = UNMutableNotificationContent()
+            content.title = "Recording Limit"
+            content.body = "15 seconds remaining. Finish your thought — you can start a new recording after."
+            content.sound = .default
+            
+            let request = UNNotificationRequest(
+                identifier: "recording-warning",
+                content: content,
+                trigger: nil  // Deliver immediately
+            )
+            UNUserNotificationCenter.current().add(request) { _ in }
+        }
+        
+        // Auto-stop at limit
+        appState.audioCaptureService.onTimeLimit = { [weak self, weak appState] in
+            Task { @MainActor in
+                guard let self = self else { return }
+                print("⏱️ Auto-stopping: recording limit reached")
+                self.isLockedMode = false
+                self.isHotkeyPressed = false
+                self.hideFloatingIndicator()
+                await appState?.stopListeningAndTranscribe()
+            }
+        }
+        
+        // Mic disconnect recovery
+        appState.audioCaptureService.onAudioInterruption = { [weak self, weak appState] in
+            Task { @MainActor in
+                guard let self = self else { return }
+                print("⚠️ Mic disconnected, stopping recording")
+                self.isLockedMode = false
+                self.isHotkeyPressed = false
+                self.hideFloatingIndicator()
+                appState?.showError("Microphone disconnected — recording stopped")
+                // Don't transcribe partial audio from a disconnect
+            }
         }
     }
 }
