@@ -90,6 +90,10 @@ class LLMService: ObservableObject {
     
     // MARK: - Model Loading
     
+    /// Timer to periodically touch model memory, preventing macOS from paging it out
+    private var keepaliveTimer: Timer?
+    private let keepaliveIntervalSeconds: TimeInterval = 300  // 5 minutes
+    
     func loadModel() async {
         guard !isModelLoaded else { return }
         
@@ -115,8 +119,11 @@ class LLMService: ObservableObject {
             isLoading = false
             print("✅ Llama 3.2 3B loaded successfully")
             
-            // Warmup
-            Task { try? await warmupModel() }
+            // Warmup (also serves as first keepalive touch)
+            Task { await self.keepaliveTouch() }
+            
+            // Start keepalive timer to prevent macOS from paging out the model
+            startKeepalive()
             
         } catch {
             print("❌ Failed to load LLM: \(error)")
@@ -125,22 +132,51 @@ class LLMService: ObservableObject {
         }
     }
     
-    private func warmupModel() async throws {
-        guard let container = modelContainer else { return }
-        let params = GenerateParameters(maxTokens: 1)
-        let input = UserInput(chat: [.user("hello")])
-        
-        _ = try await container.perform { context in
-            let lmInput = try await context.processor.prepare(input: input)
-            let stream = try MLXLMCommon.generate(input: lmInput, parameters: params, context: context)
-            for try await _ in stream { break }
-        }
-        print("🔥 Model warmed up")
-    }
-    
     func unloadModel() {
+        stopKeepalive()
         modelContainer = nil
         isModelLoaded = false
+    }
+    
+    // MARK: - Model Keepalive
+    
+    /// Periodically touch model memory to prevent macOS from paging out the 1.8GB model.
+    /// Without this, the model gets swapped to disk after ~10 min of inactivity,
+    /// causing 10-30s delays on the next inference.
+    private func startKeepalive() {
+        stopKeepalive()
+        print("🏓 Starting LLM keepalive timer (every \(Int(keepaliveIntervalSeconds))s)")
+        
+        keepaliveTimer = Timer.scheduledTimer(withTimeInterval: keepaliveIntervalSeconds, repeats: true) { [weak self] _ in
+            guard let self = self, self.isModelLoaded else { return }
+            Task {
+                await self.keepaliveTouch()
+            }
+        }
+    }
+    
+    private func stopKeepalive() {
+        keepaliveTimer?.invalidate()
+        keepaliveTimer = nil
+    }
+    
+    /// Lightweight model touch — generates a single token to keep the model in active memory
+    private func keepaliveTouch() async {
+        guard let container = modelContainer else { return }
+        do {
+            let _ = try await container.perform { (context: ModelContext) async throws -> String in
+                let messages: [Chat.Message] = [.user("hi")]
+                let userInput = UserInput(chat: messages)
+                let lmInput = try await context.processor.prepare(input: userInput)
+                let params = GenerateParameters(maxTokens: 1)
+                let stream = try MLXLMCommon.generate(input: lmInput, parameters: params, context: context)
+                for try await _ in stream { break }
+                return ""
+            }
+            print("🏓 LLM keepalive touch completed")
+        } catch {
+            print("⚠️ LLM keepalive touch failed: \(error)")
+        }
     }
     
     // MARK: - Default Mode (Rule-Based, Instant)

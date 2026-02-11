@@ -374,14 +374,35 @@ class AppState: ObservableObject {
         }
         
         // Re-activate the target app — during LLM processing it may have lost focus
+        var activated = false
         if let appDelegate = NSApplication.shared.delegate as? AppDelegate,
            let targetApp = appDelegate.previousApp {
+            // Check if the target app is still running
+            if targetApp.isTerminated {
+                print("⚠️ Target app has been terminated, falling back to notification")
+                isPasting = false
+                showCopiedNotification()
+                return
+            }
             print("📱 Re-activating target app: \(targetApp.localizedName ?? "unknown")")
-            targetApp.activate()
+            activated = targetApp.activate()
+            
+            // Retry activation once if it fails
+            if !activated {
+                print("⚠️ First activation attempt failed, retrying...")
+                Thread.sleep(forTimeInterval: 0.2)
+                activated = targetApp.activate()
+            }
         }
         
-        // Delay: focus restoration + floating window hide animation need time to complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        if !activated {
+            print("⚠️ Could not activate target app, trying frontmost app instead")
+            // The user may have switched apps — paste into whatever's in front
+        }
+        
+        // Delay: focus restoration needs time to complete
+        // Use longer delay (0.7s) to handle slow focus switches after inactivity
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
             print("📤 Simulating Command+V...")
             self.simulatePasteCommand()
             
