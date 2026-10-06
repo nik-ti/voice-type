@@ -14,7 +14,7 @@ struct MenuBarView: View {
                 HStack {
                     ProgressView()
                         .scaleEffect(0.7)
-                    Text("Loading model...")
+                    Text(appState.transcriptionService.loadingStatus)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -41,11 +41,11 @@ struct MenuBarView: View {
                     ProgressView()
                         .scaleEffect(0.6)
                     if llmService.loadingProgress > 0 {
-                        Text("Downloading grammar model... \(Int(llmService.loadingProgress * 100))%")
+                        Text("Downloading polish model... \(Int(llmService.loadingProgress * 100))%")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     } else {
-                        Text("Downloading grammar model...")
+                        Text("Downloading polish model...")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -55,8 +55,11 @@ struct MenuBarView: View {
             }
             
             Divider()
-            
-            
+
+            if appState.isStarting {
+                Text("Preparing microphone…")
+                    .font(.caption)
+            }
             if appState.isTranscribing {
                 HStack {
                     if appState.isPolishing {
@@ -69,17 +72,8 @@ struct MenuBarView: View {
                         .font(.caption)
                 }
                 .padding(.vertical, 4)
-                
-                // Live preview during polishing (#5 Streaming)
-                if appState.isPolishing && !llmService.polishingPreview.isEmpty {
-                    Text(llmService.polishingPreview)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .italic()
-                        .lineLimit(2)
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 4)
-                }
+
+
             }
             
             // Recent transcriptions (#9)

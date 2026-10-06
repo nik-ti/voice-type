@@ -1,183 +1,165 @@
 import Foundation
 import AVFoundation
 import Combine
+import VoiceTypeCore
 
-/// Service for capturing audio from the microphone
+/// Captures microphone audio at the hardware sample rate. Format conversion
+/// to 16 kHz happens later in TranscriptionService via FluidAudio's AudioConverter.
 class AudioCaptureService: ObservableObject {
     @Published var isRecording = false
     @Published var audioLevel: Float = 0.0
     @Published var recordingElapsed: TimeInterval = 0.0
-    
+
     private var audioEngine: AVAudioEngine?
-    private var audioBuffer: AVAudioPCMBuffer?
-    private var audioSamples: [Float] = []
-    
-    // Target sample rate for Parakeet (16kHz)
-    private let targetSampleRate: Double = 16000
-    
-    // Recording time limit (2 minutes)
+    private let recordingBuffer = AudioRecordingBuffer()
+
     let maxRecordingDuration: TimeInterval = 120.0
-    private let warningBeforeEnd: TimeInterval = 15.0  // Warn at 1:45
+    private let warningBeforeEnd: TimeInterval = 15.0
     private var recordingStartTime: Date?
     private var recordingTimer: DispatchSourceTimer?
     private var warningFired = false
-    
-    // Silence detection: track peak audio level during recording
-    private(set) var peakAudioLevel: Float = 0.0
-    private let silenceThreshold: Float = 0.02  // Below this = silence
-    
-    /// True if the recording contained actual speech (peak above silence threshold)
+
+    var peakAudioLevel: Float { recordingBuffer.peakLevel }
+    private let silenceThreshold: Float = 0.008
     var hadSpeech: Bool { peakAudioLevel > silenceThreshold }
-    
-    // Callbacks for time events
-    var onTimeWarning: (() -> Void)?   // Called at 1:45
-    var onTimeLimit: (() -> Void)?     // Called at 2:00
-    var onAudioInterruption: (() -> Void)?  // Called on mic disconnect
-    
-    // Lock for thread-safe sample access
-    private let samplesLock = NSLock()
-    
-    // Audio engine observer
+
+    var onTimeWarning: (() -> Void)?
+    var onTimeLimit: (() -> Void)?
+    var onAudioInterruption: (() -> Void)?
+
     private var configObserver: NSObjectProtocol?
-    
-    // MARK: - Permission
-    
+    private var isBluetoothInput = false
+
     func requestMicrophonePermission() async -> Bool {
-        return await withCheckedContinuation { continuation in
+        await withCheckedContinuation { continuation in
             AVCaptureDevice.requestAccess(for: .audio) { granted in
                 continuation.resume(returning: granted)
             }
         }
     }
-    
+
     func checkMicrophonePermission() -> Bool {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            return true
-        default:
-            return false
-        }
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
-    
+
     // MARK: - Recording
-    
-    func startRecording() throws {
+
+    @MainActor
+    func startRecording() async throws {
         guard !isRecording else { return }
-        
-        // Reset samples
-        samplesLock.lock()
-        audioSamples = []
-        samplesLock.unlock()
-        
-        // Create a new audio engine
+        try Task.checkCancellation()
+
+        // AVAudioEngine follows the system input. Changing the system device for
+        // every take races Core Audio's property listeners during teardown.
+        let input = AudioDeviceManager.defaultInputDevice()
+        isBluetoothInput = input?.isBluetooth ?? false
+        print("🎤 Input: \(input?.displayName ?? "system default")")
+
+        let maxAttempts = isBluetoothInput ? 4 : 2
+        var lastError: Error = AudioCaptureError.recordingFailed
+
+        for attempt in 1...maxAttempts {
+            do {
+                try Task.checkCancellation()
+                try attemptStartRecording()
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+                if attempt < maxAttempts {
+                    let delayMs = isBluetoothInput ? UInt64(400 * attempt) : 400
+                    print("⚠️ Recording start attempt \(attempt) failed (\(error.localizedDescription)). Retrying in \(delayMs)ms…")
+                    try await Task.sleep(nanoseconds: delayMs * 1_000_000)
+                }
+            }
+        }
+
+        throw lastError
+    }
+
+    private func attemptStartRecording() throws {
         let audioEngine = AVAudioEngine()
         let inputNode = audioEngine.inputNode
-        
-        // Get the hardware format - this triggers hardware initialization
         let hardwareFormat = inputNode.inputFormat(forBus: 0)
-        
-        // Verify we have a valid format
+
+        print("🎤 Hardware format: \(hardwareFormat.sampleRate)Hz, \(hardwareFormat.channelCount) ch")
+
         guard hardwareFormat.sampleRate > 0 && hardwareFormat.channelCount > 0 else {
             throw AudioCaptureError.invalidFormat
         }
-        
-        // Use a recording format that's compatible with the hardware
-        guard let recordingFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: hardwareFormat.sampleRate,
-            channels: 1,
-            interleaved: false
-        ) else {
-            throw AudioCaptureError.invalidFormat
+
+        let captureID = recordingBuffer.begin(sampleRate: hardwareFormat.sampleRate)
+
+        // Use the hardware format as-is. Asking for a different channel count
+        // is a common way to get a silent tap on macOS.
+        let bufferSize = AVAudioFrameCount(max(hardwareFormat.sampleRate * 0.1, 512))
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: hardwareFormat) { [weak self] buffer, _ in
+            self?.processAudioBuffer(buffer, sessionID: captureID)
         }
-        
-        // Calculate buffer size (100ms of audio)
-        let bufferSize = AVAudioFrameCount(recordingFormat.sampleRate * 0.1)
-        
-        // Install tap on input node with the recording format
-        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: recordingFormat) { [weak self] buffer, time in
-            self?.processAudioBuffer(buffer, inputSampleRate: recordingFormat.sampleRate)
-        }
-        
-        // Prepare and start with error handling
+
         audioEngine.prepare()
-        
         do {
             try audioEngine.start()
         } catch {
             inputNode.removeTap(onBus: 0)
             throw AudioCaptureError.recordingFailed
         }
-        
+
         self.audioEngine = audioEngine
-        
-        // Start recording timer
-        recordingStartTime = Date()
-        warningFired = false
-        peakAudioLevel = 0.0  // Reset silence detection
-        startRecordingTimer()
+
+        if !isRecording {
+            recordingStartTime = Date()
+            warningFired = false
+            startRecordingTimer()
+            if Thread.isMainThread {
+                isRecording = true
+                recordingElapsed = 0.0
+            } else {
+                DispatchQueue.main.sync {
+                    self.isRecording = true
+                    self.recordingElapsed = 0.0
+                }
+            }
+        }
+
         observeAudioEngineInterruption()
-        
-        DispatchQueue.main.async {
-            self.isRecording = true
-            self.recordingElapsed = 0.0
-        }
-        
-        print("✅ Audio recording started at \(recordingFormat.sampleRate)Hz")
+        print("✅ Audio recording started at \(hardwareFormat.sampleRate)Hz")
     }
-    
+
     func stopRecording() -> AVAudioPCMBuffer? {
-        guard isRecording, let audioEngine = audioEngine else {
-            return nil
-        }
-        
-        // Stop timer and observers
+        guard isRecording, let audioEngine else { return nil }
+
         stopRecordingTimer()
         removeAudioEngineObserver()
-        
-        // Remove tap and stop engine
+
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
-        
         self.audioEngine = nil
-        
-        DispatchQueue.main.async {
-            self.isRecording = false
-            self.audioLevel = 0.0
-            self.recordingElapsed = 0.0
-        }
-        
-        // Get samples thread-safely
-        samplesLock.lock()
-        let samples = audioSamples
-        audioSamples = []
-        samplesLock.unlock()
-        
-        print("✅ Audio recording stopped, captured \(samples.count) samples, peak=\(String(format: "%.3f", peakAudioLevel))")
-        
-        // Convert collected samples to buffer at target sample rate
-        return createAudioBuffer(from: samples)
+        isRecording = false
+        audioLevel = 0.0
+        recordingElapsed = 0.0
+
+        return recordingBuffer.take()
     }
-    
+
     // MARK: - Recording Timer
-    
+
     private func startRecordingTimer() {
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 1, repeating: 1.0)
         timer.setEventHandler { [weak self] in
-            guard let self = self, let start = self.recordingStartTime else { return }
+            guard let self, let start = self.recordingStartTime else { return }
             let elapsed = Date().timeIntervalSince(start)
             self.recordingElapsed = elapsed
-            
-            // Warning at warningBeforeEnd seconds before limit
+
             let warningTime = self.maxRecordingDuration - self.warningBeforeEnd
             if elapsed >= warningTime && !self.warningFired {
                 self.warningFired = true
                 print("⚠️ Recording time warning: \(Int(self.warningBeforeEnd))s remaining")
                 self.onTimeWarning?()
             }
-            
-            // Hard limit
+
             if elapsed >= self.maxRecordingDuration {
                 print("⏱️ Recording time limit reached (\(Int(self.maxRecordingDuration))s)")
                 self.onTimeLimit?()
@@ -186,98 +168,26 @@ class AudioCaptureService: ObservableObject {
         timer.resume()
         self.recordingTimer = timer
     }
-    
+
     private func stopRecordingTimer() {
         recordingTimer?.cancel()
         recordingTimer = nil
         recordingStartTime = nil
     }
-    
+
     // MARK: - Audio Processing
-    
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, inputSampleRate: Double) {
-        guard let channelData = buffer.floatChannelData else { return }
-        
-        let frameCount = Int(buffer.frameLength)
-        guard frameCount > 0 else { return }
-        
-        let channelDataPtr = channelData[0]
-        
-        // Calculate audio level (RMS)
-        var sum: Float = 0
-        for i in 0..<frameCount {
-            sum += channelDataPtr[i] * channelDataPtr[i]
+
+    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, sessionID: UUID) {
+        guard let rms = recordingBuffer.append(buffer, sessionID: sessionID) else { return }
+        let level = min(1.0, rms * 50)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isRecording else { return }
+            self.audioLevel = level
         }
-        let rms = sqrt(sum / Float(frameCount))
-        
-        // Update audio level on main thread
-        let scaledLevel = min(1.0, rms * 50)
-        DispatchQueue.main.async {
-            self.audioLevel = scaledLevel
-        }
-        
-        // Track peak for silence detection (thread-safe since Float write is atomic on ARM)
-        if rms > self.peakAudioLevel {
-            self.peakAudioLevel = rms
-        }
-        
-        // Resample to 16kHz if needed
-        var newSamples: [Float] = []
-        
-        if inputSampleRate != targetSampleRate {
-            let resampleRatio = targetSampleRate / inputSampleRate
-            let resampledCount = Int(Double(frameCount) * resampleRatio)
-            
-            for i in 0..<resampledCount {
-                let sourceIndex = Int(Double(i) / resampleRatio)
-                if sourceIndex < frameCount {
-                    newSamples.append(channelDataPtr[sourceIndex])
-                }
-            }
-        } else {
-            // Already at target sample rate
-            for i in 0..<frameCount {
-                newSamples.append(channelDataPtr[i])
-            }
-        }
-        
-        // Thread-safe append
-        samplesLock.lock()
-        audioSamples.append(contentsOf: newSamples)
-        samplesLock.unlock()
     }
-    
-    private func createAudioBuffer(from samples: [Float]) -> AVAudioPCMBuffer? {
-        guard !samples.isEmpty else { return nil }
-        
-        // Create format for 16kHz mono float
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: targetSampleRate,
-            channels: 1,
-            interleaved: false
-        ) else {
-            return nil
-        }
-        
-        let frameCount = AVAudioFrameCount(samples.count)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-            return nil
-        }
-        
-        buffer.frameLength = frameCount
-        
-        if let channelData = buffer.floatChannelData {
-            for (index, sample) in samples.enumerated() {
-                channelData[0][index] = sample
-            }
-        }
-        
-        return buffer
-    }
-    
+
     // MARK: - Audio Engine Recovery
-    
+
     private func observeAudioEngineInterruption() {
         guard let engine = audioEngine else { return }
         configObserver = NotificationCenter.default.addObserver(
@@ -285,12 +195,14 @@ class AudioCaptureService: ObservableObject {
             object: engine,
             queue: .main
         ) { [weak self] _ in
-            guard let self = self else { return }
-            print("⚠️ Audio engine configuration changed (mic disconnected?)")
+            guard let self, self.isRecording else { return }
+            // Preserve the take at its original sample rate. Restarting and joining
+            // differently clocked audio can duplicate or distort the recording.
+            self.removeAudioEngineObserver()
             self.onAudioInterruption?()
         }
     }
-    
+
     private func removeAudioEngineObserver() {
         if let observer = configObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -299,21 +211,19 @@ class AudioCaptureService: ObservableObject {
     }
 }
 
-// MARK: - Errors
-
 enum AudioCaptureError: LocalizedError {
     case invalidFormat
     case noPermission
     case recordingFailed
-    
+
     var errorDescription: String? {
         switch self {
         case .invalidFormat:
-            return "Invalid audio format - please check your microphone"
+            return "Invalid audio format — the microphone may still be switching. Try again."
         case .noPermission:
             return "Microphone permission denied"
         case .recordingFailed:
-            return "Failed to start recording - please check your microphone settings"
+            return "Failed to start recording — check your microphone in Preferences"
         }
     }
 }

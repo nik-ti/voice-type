@@ -6,7 +6,13 @@ class PersistenceService {
     private var db: OpaquePointer?
     private let dbPath: String
     
-    init() {
+    init(databasePath: String? = nil) {
+        if let databasePath {
+            dbPath = databasePath
+            openDatabase()
+            createTable()
+            return
+        }
         // Create application support directory if needed
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let appDir = appSupport.appendingPathComponent("VoiceType", isDirectory: true)

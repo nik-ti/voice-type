@@ -1,83 +1,104 @@
 #!/bin/bash
-rm -rf VoiceType.app
-mkdir -p VoiceType.app/Contents/MacOS
-mkdir -p VoiceType.app/Contents/Resources
-
-# Copy executable
-# Get build path dynamically
-BUILD_PATH=$(swift build --show-bin-path -c release)
-echo "Build path: $BUILD_PATH"
-
-# Copy executable
-if [ -f "$BUILD_PATH/VoiceType" ]; then
-    cp "$BUILD_PATH/VoiceType" VoiceType.app/Contents/MacOS/
-else
-    echo "❌ Error: VoiceType binary not found in $BUILD_PATH"
+# Build and validate a fresh app, then install it to /Applications/VoiceType.app.
+# Shader caches are keyed by their source and compiler; failed builds preserve the installed app.
+set -euo pipefail
+cd "$(dirname "$0")"
+mkdir -p .build
+if ! mkdir .build/package.lock 2>/dev/null; then
+    echo "Another packaging run is active (.build/package.lock)." >&2
     exit 1
 fi
+install_dir="${VOICETYPE_INSTALL_DIR:-/Applications}"
+installed="$install_dir/VoiceType.app"
+stage=""
+backup=""
+cleanup() {
+    if [ -n "$backup" ] && [ -d "$backup" ] && [ ! -d "$installed" ]; then
+        mv "$backup" "$installed"
+    fi
+    if [ -n "$stage" ] && [ -d "$stage" ]; then rm -rf "$stage"; fi
+    rmdir .build/package.lock
+}
+trap cleanup EXIT
 
-# Copy Info.plist (Prefer correct source)
-if [ -f "VoiceType/Info.plist" ]; then
-    cp VoiceType/Info.plist VoiceType.app/Contents/
-elif [ -f "Info.plist" ]; then
-    cp Info.plist VoiceType.app/Contents/
-else
-    echo "⚠️ Info.plist not found!"
+swift build -c release --disable-automatic-resolution
+build_path="$(swift build -c release --show-bin-path --disable-automatic-resolution)"
+test -x "$build_path/VoiceType"
+stage="$(mktemp -d "$PWD/.build/package.XXXXXX")"
+app="$stage/VoiceType.app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp "$build_path/VoiceType" "$app/Contents/MacOS/VoiceType"
+for resource in "$build_path"/*.bundle; do
+    [ ! -d "$resource" ] || cp -R "$resource" "$app/Contents/Resources/"
+done
+
+metal_source="$PWD/.build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
+metal_version="$(xcrun metal --version)"
+shader_key="$(python3 - "$metal_source" "$metal_version" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+digest = hashlib.sha256(sys.argv[2].encode())
+for path in sorted(root.rglob('*')):
+    if path.is_file():
+        digest.update(str(path.relative_to(root)).encode())
+        digest.update(path.read_bytes())
+print(digest.hexdigest()[:20])
+PY
+)"
+shader_cache="$PWD/.build/metal-$shader_key"
+if [ ! -s "$shader_cache/default.metallib" ]; then
+    echo "Compiling MLX shaders for this source and compiler..."
+    mkdir -p "$stage/metal"
+    index=0
+    while IFS= read -r -d '' source; do
+        index=$((index + 1))
+        xcrun metal -c "$source" -I "$metal_source" -o "$stage/metal/$index.air"
+    done < <(find "$metal_source" -name '*.metal' -print0)
+    xcrun metallib "$stage/metal"/*.air -o "$stage/metal/default.metallib"
+    mkdir -p "$shader_cache"
+    cp "$stage/metal/default.metallib" "$shader_cache/default.metallib"
 fi
+mkdir -p "$app/Contents/Resources/mlx-swift_Cmlx.bundle"
+cp "$shader_cache/default.metallib" "$app/Contents/Resources/mlx-swift_Cmlx.bundle/"
 
-# Copy resources
-# First checking for bundle created by SPM
-if [ -d ".build/release/VoiceType_VoiceType.bundle" ]; then
-    echo "Using SPM bundle resources..."
-    cp -r .build/release/VoiceType_VoiceType.bundle VoiceType.app/Contents/Resources/
+xcrun actool Sources/VoiceType/Resources/Assets.xcassets \
+    --compile "$app/Contents/Resources" --platform macosx --minimum-deployment-target 14.0 \
+    --app-icon AppIcon --output-partial-info-plist "$stage/assets.plist"
+revision="$(git rev-parse --short HEAD)"
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then revision="$revision-dirty"; fi
+build_id="$(date -u +%Y%m%dT%H%M%SZ)-$revision"
+python3 - "$app" "$stage/assets.plist" "$build_id" <<'PY'
+from pathlib import Path
+import plistlib
+import sys
+source = Path('VoiceType/Info.plist')
+if not source.exists():
+    source = Path('Info.plist')
+info = plistlib.loads(source.read_bytes())
+info.update(plistlib.loads(Path(sys.argv[2]).read_bytes()))
+info.update(CFBundleDevelopmentRegion='en', CFBundleExecutable='VoiceType',
+            CFBundleIdentifier='com.nikti.VoiceType', CFBundleName='VoiceType',
+            CFBundlePackageType='APPL', CFBundleShortVersionString='1.0.1',
+            CFBundleVersion='2', LSMinimumSystemVersion='14.0', VoiceTypeBuildID=sys.argv[3])
+info.pop('NSAppleEventsUsageDescription', None)
+Path(sys.argv[1], 'Contents', 'Info.plist').write_bytes(plistlib.dumps(info))
+PY
+cp VoiceType.entitlements "$app/Contents/Resources/"
+plutil -lint "$app/Contents/Info.plist"
+codesign --force --deep --sign - --entitlements VoiceType.entitlements "$app"
+codesign --verify --deep --strict "$app"
+test -s "$app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib"
+
+# Quit the running copy so the new build is what actually opens.
+osascript -e 'quit app id "com.nikti.VoiceType"' >/dev/null 2>&1 || true
+if [ -d "$installed" ]; then
+    backup="$PWD/.build/VoiceType.previous.$build_id.app"
+    mv "$installed" "$backup"
 fi
-
-# Compile Metal shaders for MLX (if not already done)
-MLX_METAL_PATH=".build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
-METAL_BUILD_DIR="temp_metal_build"
-if [ ! -f "$METAL_BUILD_DIR/default.metallib" ]; then
-    echo "Compiling Metal shaders..."
-    mkdir -p "$METAL_BUILD_DIR"
-    find "$MLX_METAL_PATH" -name "*.metal" -print0 | while IFS= read -r -d '' file; do
-        filename=$(basename "$file")
-        /usr/bin/xcrun metal -c "$file" -I "$MLX_METAL_PATH" -o "$METAL_BUILD_DIR/$filename.air"
-    done
-    /usr/bin/xcrun metallib "$METAL_BUILD_DIR"/*.air -o "$METAL_BUILD_DIR/default.metallib"
-fi
-
-# Create MLX bundle with Metal library
-mkdir -p VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle
-cp "$METAL_BUILD_DIR/default.metallib" VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle/
-
-# Always compile assets for the main app icon
-echo "Compiling assets..."
-/usr/bin/xcrun actool Sources/VoiceType/Resources/Assets.xcassets --compile VoiceType.app/Contents/Resources --platform macosx --minimum-deployment-target 14.0 --app-icon AppIcon --output-partial-info-plist /tmp/partial.plist
-
-# Copy Info.plist to inside Contents (redundant but standard locally) - NO, already did it above correctly.
-# The previous script did it twice. We do it once above.
-
-# update Info.plist inside the app bundle
-# Verify file exists first
-if [ -f "VoiceType.app/Contents/Info.plist" ]; then
-    # Update Info.plist variables
-    sed -i '' 's/\$(EXECUTABLE_NAME)/VoiceType/g' VoiceType.app/Contents/Info.plist
-    sed -i '' 's/\$(PRODUCT_BUNDLE_IDENTIFIER)/com.nikti.VoiceType/g' VoiceType.app/Contents/Info.plist
-    sed -i '' 's/\$(PRODUCT_NAME)/VoiceType/g' VoiceType.app/Contents/Info.plist
-    sed -i '' 's/\$(PRODUCT_BUNDLE_PACKAGE_TYPE)/APPL/g' VoiceType.app/Contents/Info.plist
-    sed -i '' 's/\$(MARKETING_VERSION)/1.0/g' VoiceType.app/Contents/Info.plist
-    sed -i '' 's/\$(CURRENT_PROJECT_VERSION)/1/g' VoiceType.app/Contents/Info.plist
-    sed -i '' 's/\$(MACOSX_DEPLOYMENT_TARGET)/14.0/g' VoiceType.app/Contents/Info.plist
-else
-    echo "❌ Error: Info.plist missing in built app bundle"
-    exit 1
-fi
-
-# Copy entitlements
-if [ -f "VoiceType.entitlements" ]; then
-    cp VoiceType.entitlements VoiceType.app/Contents/Resources/
-fi
-
-# Sign app
-codesign --force --deep --sign - --entitlements VoiceType.entitlements VoiceType.app
-
-echo "✅ App packaged to VoiceType.app"
+mv "$app" "$installed"
+# Older builds were left in the project folder; remove that copy so only one app exists.
+if [ -d VoiceType.app ]; then mv VoiceType.app "$PWD/.build/VoiceType.project-copy.$build_id.app"; fi
+echo "Installed $installed ($build_id)"
+if [ -n "$backup" ]; then echo "Previous app retained at $backup"; fi

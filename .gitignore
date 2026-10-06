@@ -11,6 +11,7 @@ DerivedData/
 *.perspectivev3
 !default.perspectivev3
 xcuserdata/
+**/xcuserdata/
 *.xccheckout
 *.moved-aside
 DerivedData
@@ -25,7 +26,7 @@ project.xcworkspace/contents.xcworkspacedata
 .swiftpm/
 Packages/
 Package.pins
-Package.resolved
+**/xcshareddata/swiftpm/Package.resolved
 
 # macOS
 #
@@ -49,3 +50,7 @@ temp_metal_build/
 compile_mlx.sh
 VoiceType.app/
 *.dmg
+
+# Python packaging checks
+__pycache__/
+*.py[cod]

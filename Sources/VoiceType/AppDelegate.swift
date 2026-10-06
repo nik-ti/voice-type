@@ -1,3 +1,5 @@
+// Handles global hotkeys and the recording indicator.
+// Recording ownership and safe delivery live in AppState.
 import AppKit
 import SwiftUI
 import Carbon.HIToolbox
@@ -8,6 +10,7 @@ import UserNotifications
 class AppDelegate: NSObject, NSApplicationDelegate {
     var floatingWindow: NSWindow?
     var floatingHostingView: NSHostingView<FloatingIndicatorView>?
+    private var indicatorRevision = 0
     
     // Global event monitors
     private var keyDownMonitor: Any?
@@ -24,6 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var previousApp: NSRunningApplication?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        PipelineTiming.event("build=\(Bundle.main.object(forInfoDictionaryKey: "VoiceTypeBuildID") as? String ?? "development")")
         // Don't show app in dock
         NSApp.setActivationPolicy(.accessory)
         
@@ -48,7 +52,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    @MainActor
     func applicationWillTerminate(_ notification: Notification) {
+        AppState.shared?.shutdown()
         // Remove event monitors
         if let monitor = keyDownMonitor {
             NSEvent.removeMonitor(monitor)
@@ -67,41 +73,63 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupFloatingWindow() {
         let contentView = FloatingIndicatorView(audioLevel: 0, isVisible: false, isLocked: false)
         let hostingView = NSHostingView(rootView: contentView)
-        
-        // Create borderless, floating window - compact pill size
-        let window = NSWindow(
+
+        let window = Self.makeFloatingIndicatorPanel()
+        window.contentView = hostingView
+
+        self.floatingWindow = window
+        self.floatingHostingView = hostingView
+    }
+
+    /// A non-activating panel stays above the app receiving dictation without
+    /// stealing keyboard focus from it.
+    static func makeFloatingIndicatorPanel() -> NSPanel {
+        let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 100, height: 40),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        
-        window.contentView = hostingView
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        window.hasShadow = true
-        window.ignoresMouseEvents = false // Allow button clicks
-        
-        // Position at bottom center of main screen
-        if let screen = NSScreen.main {
-            let screenFrame = screen.visibleFrame
-            let windowFrame = window.frame
-            let x = screenFrame.midX - windowFrame.width / 2
-            let y = screenFrame.minY + 80
-            window.setFrameOrigin(NSPoint(x: x, y: y))
-        }
-        
-        self.floatingWindow = window
-        self.floatingHostingView = hostingView
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.level = .statusBar
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .canJoinAllApplications,
+            .fullScreenAuxiliary,
+            .stationary,
+            .ignoresCycle
+        ]
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = false
+        panel.hidesOnDeactivate = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.isReleasedWhenClosed = false
+        return panel
+    }
+
+    private func positionIndicatorOnActiveScreen() {
+        guard let window = floatingWindow else { return }
+        let pointer = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(pointer, $0.frame, false) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
+        let x = screen.visibleFrame.midX - window.frame.width / 2
+        let y = screen.visibleFrame.minY + 80
+        window.setFrameOrigin(NSPoint(x: x, y: y))
     }
     
     @MainActor
     func showFloatingIndicator() {
+        indicatorRevision += 1
         print("🔵 Showing floating indicator, locked=\(isLockedMode)")
         updateIndicatorView(audioLevel: 0)
-        floatingWindow?.orderFront(nil)
+        positionIndicatorOnActiveScreen()
+        floatingWindow?.alphaValue = 1
+        floatingWindow?.contentView?.layoutSubtreeIfNeeded()
+        floatingWindow?.orderFrontRegardless()
+        PipelineTiming.event("indicator_show visible=\(floatingWindow?.isVisible == true)")
         
         // Subscribe to audio level updates
         if let appState = AppState.shared {
@@ -131,12 +159,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         isLockedMode = false
         isHotkeyPressed = false
         
-        // Restore focus to the previous app before stopping (so paste goes there)
-        if let app = previousApp {
-            print("📱 Restoring focus to: \(app.localizedName ?? "unknown")")
-            app.activate()
-        }
-        
         triggerStopListening()
     }
     
@@ -147,8 +169,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         audioLevelCancellable = nil
         floatingHostingView?.rootView = FloatingIndicatorView(audioLevel: 0, isVisible: false, isLocked: false)
         
-        // Give animation time before hiding window
+        indicatorRevision += 1
+        let revision = indicatorRevision
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard self.indicatorRevision == revision else { return }
             self.floatingWindow?.orderOut(nil)
         }
     }
@@ -222,7 +246,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             
             // Option alone (no fn): Exit locked mode
-            if optionKeyPressed && !fnKeyPressed && isLockedMode {
+            if optionKeyPressed && !fnKeyPressed && isLockedMode && [58, 61].contains(event.keyCode) {
                 print("🔓 Locked mode deactivated (Option)")
                 isLockedMode = false
                 isHotkeyPressed = false
@@ -256,11 +280,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @MainActor
     private func handleKeyDown(_ event: NSEvent) {
-        // Get current mode
+        guard !event.isARepeat else { return }
         guard let appState = AppState.shared else { return }
         let mode = appState.hotkeyMode
-        
-        print("⌨️ KeyDown: keyCode=\(event.keyCode), mode=\(mode)")
         
         // Special: fn+space toggle lock (Always available as backup)
         if event.modifierFlags.contains(.function) && event.keyCode == 49 { // 49 = space
@@ -318,47 +340,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    @MainActor
     private func handleKeyUp(_ event: NSEvent) {
-        // Nothing needed for key up in current mode
+        if AppState.shared?.hotkeyMode == .optionSpace, event.keyCode == 49, isHotkeyPressed {
+            isHotkeyPressed = false
+            triggerStopListening()
+        }
     }
     
     // MARK: - Listening Control
     
+    @MainActor
     private func triggerStartListening() {
-        // Capture the currently active app before we start
-        previousApp = NSWorkspace.shared.frontmostApplication
-        print("📱 Captured previous app: \(previousApp?.localizedName ?? "none")")
-        
-        Task { @MainActor in
-            guard let appState = AppState.shared else { 
-                print("❌ AppState.shared is nil")
-                return 
-            }
-            print("🎤 Starting listening via hotkey")
-            appState.startListening()
+        guard let appState = AppState.shared else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        if appState.startListening() {
+            if front != NSRunningApplication.current { previousApp = front }
             showFloatingIndicator()
+        } else {
+            isHotkeyPressed = false
+            isLockedMode = false
         }
     }
-    
+
     private func triggerStopListening() {
-        // Restore focus to the previous app FIRST (before hiding indicator)
-        // This covers ALL stop paths: Fn release, Option release, Escape, locked mode
-        if let app = previousApp {
-            print("📱 Restoring focus to: \(app.localizedName ?? "unknown")")
-            app.activate()
-        }
-        
         Task { @MainActor in
-            guard let appState = AppState.shared else { 
-                print("❌ AppState.shared is nil")
-                return 
-            }
-            print("🎤 Stopping listening via hotkey")
+            guard let appState = AppState.shared else { return }
             hideFloatingIndicator()
             await appState.stopListeningAndTranscribe()
         }
     }
-    
+
+    @MainActor
+    func recordingDidEnd() {
+        isHotkeyPressed = false
+        isLockedMode = false
+        hideFloatingIndicator()
+    }
+
     // MARK: - Model Loading
     
     @MainActor
@@ -377,7 +396,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Recording Time Limit
     
     @MainActor
-    private func setupRecordingCallbacks() {
+    func setupRecordingCallbacks() {
         guard let appState = AppState.shared else { return }
         
         // Warning at 15 seconds before limit
@@ -415,8 +434,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.isLockedMode = false
                 self.isHotkeyPressed = false
                 self.hideFloatingIndicator()
-                appState?.showError("Microphone disconnected — recording stopped")
-                // Don't transcribe partial audio from a disconnect
+                appState?.showError("Microphone changed — finishing the audio already recorded")
+                await appState?.stopListeningAndTranscribe()
             }
         }
     }

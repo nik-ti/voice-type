@@ -18,6 +18,14 @@ struct Transcription: Identifiable, Codable, Hashable {
         switch language {
         case "en": return "🇺🇸"
         case "ru": return "🇷🇺"
+        case "uk": return "🇺🇦"
+        case "es": return "🇪🇸"
+        case "fr": return "🇫🇷"
+        case "de": return "🇩🇪"
+        case "it": return "🇮🇹"
+        case "pt": return "🇵🇹"
+        case "pl": return "🇵🇱"
+        case "nl": return "🇳🇱"
         default: return "🌐"
         }
     }
