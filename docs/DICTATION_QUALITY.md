@@ -1,0 +1,57 @@
+# Dictation quality update
+
+This note records what changed, why it changed, and the evidence from the actual local models. The fixtures are supplied/public text and synthetic speech; no private microphone recordings or dictated text were sent to a service.
+
+## Changes on October 28, 2026
+
+Polished uses **Qwen3 4B Instruct 2507, four-bit**, replacing the 0.6B editor. Its prompt asks for complete English/Russian grammar correction while preserving names, facts, language and form of address. Transcript tags separate dictated commands from instructions to the editor. The repeat-token penalty was removed because the installed MLX implementation penalized tokens from the input too, which conflicts with copying names and otherwise-correct words.
+
+Short prose now receives model editing. Standalone filenames have an explicit fast path, rather than the former blanket shortcut for all takes of eight words or fewer. High-confidence number/weekday retractions and compound-subject repairs are prepared before editing; the model remains responsible for broader grammar. Ordinary apologies and deliberate `X, not Y` contrasts are preserved.
+
+`Cloud. Md.` becomes the explicitly requested known spelling `CLAUDE.md`; common filename extensions and explicit English/Russian quotation commands are normalized. The model preserves existing quotation boundaries. This cannot establish quote boundaries that are ambiguous in the recognized words, nor recover a word absent from the recording or recognizer output.
+
+Accepted edits receive number, weekday, capitalization/name, filename, negation, condition, beginning, word-overlap and ending checks. Apple NaturalLanguage lemmas allow inflection corrections without treating every changed word as lost content. These are conservative checks, not a proof of general semantic equivalence. Rejections safely fall back and log a content-free reason. Model output is checked again after number/layout formatting.
+
+Long single-block prose gets conservative paragraph formatting if the model omits it; existing paragraphs and lists are retained. Copied prose receives one trailing space, while stored history and literal filenames remain unchanged.
+
+## Recognition choice
+
+VoiceType retains Parakeet TDT v3 and selects its rebuilt `.int8V2` encoder. Upstream found that the original compressed encoder could corrupt words with certain trailing audio. The replacement corrected three published reproductions. This is a specific bug fix, not proof that it caused Nikita’s missing “Send” or that all recognition errors are solved. It is already supported by the pinned library, so no dependency update or custom runtime was needed. [Upstream fix](https://github.com/FluidInference/FluidAudio/pull/872), [Original issue](https://github.com/FluidInference/FluidAudio/issues/760).
+
+## Measured local checks
+
+Hardware: Apple M5, 24 GB memory. Models run on this Mac; synthetic audio is generated with the installed Samantha and Milena voices. Editing tests use fixed transcripts to isolate editing from recognition.
+
+| Check | Result |
+|---|---|
+| Original 0.6B pipeline | Reproduced unresolved dates/budgets, short grammar bypass and Russian editing failures |
+| 1.7B comparison | Faster, but earlier held-out Russian grammar stayed broken and one run introduced “Have Adobe approved…” |
+| Selected 4B editor | Eleven fixtures pass: long proposal, corrected instructions, short grammar, intentional contrast, Russian correction/grammar, filename, quoted speech, literal filename and two additional grammar cases |
+| Selected editing latency | About 0.4–1.9s for short prose; 3.46s for the long proposal; around 2ms for a literal filename |
+| MLX peak allocation | 2,891,617,404 bytes; excludes CoreML and other app/process memory |
+| Original encoder replay | English 0.156s; Russian 0.126s after load |
+| Rebuilt encoder replay | English 0.252s; Russian 0.137s after load; required instructions/dates preserved |
+| Automated suite | 54 core and 8 integration checks, zero failures in the full quality run; model smoke is also opt-in |
+| Packaging failure test | Passed |
+
+Timing includes local fixture preparation/edit validation where applicable, excludes microphone capture and physical paste, and is not a broad accuracy or speed benchmark. The two encoder replays cannot measure a population word-error rate. The four-second optional editing deadline prevents unbounded waiting; slower, busy or rejected edits still use fallback. Long dictations can exceed this budget.
+
+Commands and fixture expectations are in `SPEC.md` and the quality test files. Local validation logs are under ignored `.build/quality-validation.log` and `.build/model-smoke.log`; fixture text printed there is synthetic/public. Routine application logs never include transcript contents.
+
+## NVIDIA Nemotron 3.5 Transcribe
+
+The October 28 release is **not** the earlier Nemotron 3.5 ASR Streaming 0.6B. The new model has 34B total parameters, around 4.3B active including its audio encoder, and supports English and Russian. NVIDIA reports long-form WER 10.98 versus Parakeet v3’s 13.37 under that benchmark. This is evidence for an accuracy candidate, not proof on short dictation or this Mac. Its current published compatibility lists NVIDIA hardware on Linux/Windows; a supported full-model integration in VoiceType’s Swift/CoreML/MLX stack was not established. We did not download or run it. [Official model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B).
+
+Parakeet Ultra is a more practical later ASR comparison: ready Mac/CoreML assets, the v3 architecture and English/Russian support. Our pinned library lacks its version selector, so it needs a separately verified loader or a carefully tested dependency update. It was researched but not installed. [Upstream documentation](https://github.com/FluidInference/FluidAudio/blob/main/Documentation/ASR/ParakeetUltra.md).
+
+Wispr’s cloud infrastructure and latency engineering help explain its responsiveness; its published 700ms figure is an engineering expectation, not a guarantee for every take. VoiceType still does full recognition and editing after release, so a local streaming pipeline is a separate future performance project. [Wispr engineering explanation](https://wisprflow.ai/post/technical-challenges).
+
+## Action record and release status
+
+1. Reproduced the old editing failures before changing the app.
+2. Compared 0.6B, 1.7B and 4B editors on the same text; selected the 4B quality result.
+3. Added focused cleanup/validation regression checks and executed the real local models.
+4. Compared original and rebuilt recognition encoders on identical synthetic audio.
+5. Updated implementation and documentation; release packaging and native UI verification are the final steps.
+
+Live microphone, Bluetooth, sleep/wake, and insertion into another app remain manual verification. General speech accuracy and Wispr-equivalent latency are not claimed from these checks.

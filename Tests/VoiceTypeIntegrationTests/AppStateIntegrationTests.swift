@@ -67,13 +67,13 @@ final class AppStateIntegrationTests: XCTestCase {
         let history = TestHistory(databasePath: ":memory:")
         history.shouldFail = true
         var delivered: [String] = []
-        history.beforeSave = { XCTAssertEqual(delivered, ["I feel ill today."]) }
+        history.beforeSave = { XCTAssertEqual(delivered, ["I feel ill today. "]) }
         let state = makeState(microphone: microphone, history: history) { delivered.append($0); return 1 }
         XCTAssertTrue(state.startListening())
         for _ in 0..<100 where !state.isListening { try? await Task.sleep(for: .milliseconds(5)) }
         XCTAssertTrue(state.isListening)
         await state.stopListeningAndTranscribe()
-        XCTAssertEqual(delivered, ["I feel ill today."])
+        XCTAssertEqual(delivered, ["I feel ill today. "])
         XCTAssertEqual(history.fetches, 1)
         XCTAssertTrue(state.errorMessage?.contains("history") == true)
         XCTAssertFalse(state.isTranscribing)
@@ -93,7 +93,7 @@ final class AppStateIntegrationTests: XCTestCase {
         XCTAssertTrue(state.isListening)
         microphone.onAudioInterruption?()
         for _ in 0..<100 where delivered.isEmpty { try? await Task.sleep(for: .milliseconds(5)) }
-        XCTAssertEqual(delivered, ["I feel ill today."])
+        XCTAssertEqual(delivered, ["I feel ill today. "])
         XCTAssertFalse(state.isListening)
         XCTAssertFalse(microphone.isRecording)
         state.shutdown()

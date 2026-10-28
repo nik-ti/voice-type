@@ -124,7 +124,7 @@ struct AboutView: View {
             VStack(spacing: 8) {
                 Text("Speech: Parakeet TDT v3 (25 European languages)")
                     .font(.caption)
-                Text("Polished Mode: Qwen3 0.6B on-device")
+                Text("Polished Mode: \(LLMService.modelDisplayName) on-device")
                     .font(.caption)
             }
             .foregroundColor(.secondary)

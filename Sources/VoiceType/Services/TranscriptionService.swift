@@ -18,6 +18,11 @@ class TranscriptionService: ObservableObject {
 #if canImport(FluidAudio)
     private var asrManager: AsrManager?
     private var audioConverter: AudioConverter?
+    private let encoderPrecision: ParakeetEncoderPrecision
+
+    init(encoderPrecision: ParakeetEncoderPrecision = .int8V2) {
+        self.encoderPrecision = encoderPrecision
+    }
 #endif
 
     func loadModels() async throws {
@@ -36,7 +41,7 @@ class TranscriptionService: ObservableObject {
             self.loadingStatus = "Loading speech model…"
         }
 
-        let models = try await AsrModels.downloadAndLoad(version: .v3, progressHandler: { [weak self] progress in
+        let models = try await AsrModels.downloadAndLoad(version: .v3, encoderPrecision: encoderPrecision, progressHandler: { [weak self] progress in
             Task { @MainActor in
                 self?.loadingProgress = 0.2 + progress.fractionCompleted * 0.75
                 self?.loadingStatus = "Loading speech model…"

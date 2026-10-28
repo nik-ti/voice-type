@@ -285,7 +285,7 @@ class AppState: ObservableObject {
 
             let transcription = Transcription(id: UUID(), timestamp: Date(), language: detected.code, text: finalText)
             // Delivery must not depend on SQLite being writable.
-            let clipboardVersion = clipboardWriter(finalText)
+            let clipboardVersion = clipboardWriter(DictationInsertion.text(finalText))
             if autoPaste { await pasteFromClipboard(expectedChangeCount: clipboardVersion) }
             timing.mark("delivery")
             do {
