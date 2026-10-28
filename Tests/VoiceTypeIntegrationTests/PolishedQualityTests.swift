@@ -74,6 +74,10 @@ final class PolishedQualityTests: XCTestCase {
              ["sarah said", "introduction shorter?"], []),
             ("literal-filename", "Cloud. Md.", .english, ["claude.md"], ["cloud"]),
             ("duration", "Make a 10-second video.", .english, ["10-second video"], ["12th"]),
+            ("spoken-list", "Here's the list of constraints. Number one, we have to make sure that the video is not too long. Number two, we have to make sure proper tests are written beforehand. Number three, the UI must be mobile friendly.", .english,
+             ["here's the list of constraints:", "1.", "2.", "3.", "video is not too long", "proper tests are written beforehand", "ui must be mobile"], ["number one", "number two", "number three"]),
+            ("russian-list", "Вот список требований. Пункт один, Сохранить договор. Пункт два, Проверить адрес.", .russian,
+             ["список требований:", "1.", "2.", "сохранить договор", "проверить адрес"], ["пункт один", "пункт два"]),
             ("unseen-grammar", "Him and Olivia was reviewing the estimate, and they thinks the documents is ready.", .english,
              ["olivia", "were reviewing", "documents", "ready"], ["him and", "they thinks", "documents is"]),
             ("unseen-russian", "Эти документы уже готова, но мы ещё не проверила адреса. Не отправляй письмо, если клиент не подтвердил дату.", .russian,
@@ -100,6 +104,9 @@ final class PolishedQualityTests: XCTestCase {
             }
             if name == "long-proposal" {
                 XCTAssertTrue(output.contains("\n\n"), "Separate the proposal, approval follow-up and total into paragraphs")
+            }
+            if name == "spoken-list" {
+                for index in 1...3 { XCTAssertTrue(output.contains("\n\(index). "), "Keep each constraint on its own numbered line: \(output)") }
             }
             for fragment in required {
                 XCTAssertTrue(normalized.contains(fragment.replacingOccurrences(of: ",", with: "")), "\(name): missing \(fragment): \(output)")

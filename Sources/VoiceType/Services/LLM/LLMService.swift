@@ -130,13 +130,15 @@ class LLMService: ObservableObject {
         var result = TextCleanupService.removeHesitations(text, language: language)
         result = TextCleanupService.collapseFalseStarts(result)
         result = PolishedGrammar.repairCompoundSubjects(DictationTerms.normalize(SpokenCorrections.resolve(result)))
+        let spokenList = DictationLists.parse(result)
+        result = spokenList?.formatted() ?? result
         if DictationTerms.isStandaloneFilename(result) {
             PipelineTiming.event("polish_literal_filename")
             return result
         }
 
         if let llmResult = await callLLMWithGuardrails(text: result) {
-            let polished = DictationParagraphs.format(TextCleanupService.polishPostPass(llmResult))
+            let polished = DictationParagraphs.format(DictationLists.format(TextCleanupService.polishPostPass(llmResult)))
             if let rejection = PolishValidator.rejection(input: result, output: polished) {
                 lastFallbackReason = rejection.rawValue
             } else {
@@ -144,9 +146,10 @@ class LLMService: ObservableObject {
                 return polished
             }
         }
-        result = TextCleanupService.applyGrammarRules(result)
-        result = TextCleanupService.basicFormat(result, language: language)
-        result = DictationTerms.normalize(result)
+        let fallback: (String) -> String = { text in
+            DictationTerms.normalize(TextCleanupService.basicFormat(TextCleanupService.applyGrammarRules(text), language: language))
+        }
+        result = spokenList?.formatted(transform: fallback) ?? fallback(result)
         PipelineTiming.event("polish_rules_fallback")
         PipelineTiming.event("polish_fallback_reason=\(lastFallbackReason ?? "unknown")")
         return DictationParagraphs.format(result)

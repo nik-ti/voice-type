@@ -26,12 +26,12 @@ Hardware: Apple M5, 24 GB memory. Models run on this Mac; synthetic audio is gen
 |---|---|
 | Original 0.6B pipeline | Reproduced unresolved dates/budgets, short grammar bypass and Russian editing failures |
 | 1.7B comparison | Faster, but earlier held-out Russian grammar stayed broken and one run introduced “Have Adobe approved…” |
-| Selected 4B editor | Twelve fixtures pass: long proposal, corrected instructions, short grammar, intentional contrast, Russian correction/grammar, filename, quoted speech, literal filename, duration and two additional grammar cases |
+| Selected 4B editor | Fourteen fixtures pass: long proposal, corrected instructions, short grammar, intentional contrast, Russian correction/grammar, filename, quoted speech, literal filename, duration, English/Russian lists and two additional grammar cases |
 | Selected editing latency | About 0.4–1.9s for short prose; 3.46s for the long proposal; around 2ms for a literal filename |
 | MLX peak allocation | 2,891,617,404 bytes; excludes CoreML and other app/process memory |
 | Original encoder replay | English 0.156s; Russian 0.126s after load |
 | Rebuilt encoder replay | English 0.252s; Russian 0.137s after load; required instructions/dates preserved |
-| Automated suite | All 65 checks pass with the three local-model/replay opt-ins enabled; no skips or failures |
+| Automated suite | All 73 checks pass with the three local-model/replay opt-ins enabled; no skips or failures |
 | Packaging failure test | Passed |
 
 Timing includes local fixture preparation/edit validation where applicable, excludes microphone capture and physical paste, and is not a broad accuracy or speed benchmark. The two encoder replays cannot measure a population word-error rate. The four-second optional editing deadline prevents unbounded waiting; slower, busy or rejected edits still use fallback. Long dictations can exceed this budget.
@@ -66,3 +66,15 @@ A later test reproduced the exact reported error without speech recognition or t
 Checks include ten/fifteen/twenty-five seconds, decimal durations, minutes, existing hyphens, capitalization, genuine `twelfth`/`second` ordinals, dates, money and unchanged Russian normalization. The ambiguous bare wording `twenty second` retains the native ordinal interpretation; explicit `20 second`, `20-second` and plural `twenty seconds` are duration forms. We do not blindly rewrite `12th` into a duration.
 
 Action record: first captured the native formatter's failing output; added duration/ordinal regression checks; implemented the boundary repair without changing dependencies; ran all 65 model-enabled checks successfully. The local followup test log is `.build/duration-validation.log`. Release installation follows the same validated packaging process.
+
+## Explicit spoken lists
+
+The old unavailable-model path reproduced the user's list as a single paragraph, including a period after its introduction. The repair recognizes an introduction announcing a list plus sequential `number one/two…`, numeric equivalents, or Russian `пункт/номер` markers. A sequence without an introduction is also accepted when it clearly starts with those markers. It requires at least two nonempty, consecutive items beginning at one; incomplete sequences and quoted marker phrases are not guessed into a list.
+
+The introduction receives a colon and each item gets its own numbered line. Question/exclamation introductions retain that punctuation. The local model is explicitly told to keep the full wording and order. Fallback cleans each parsed item separately so whole-text whitespace cleanup cannot flatten the list again. Ordinary “number one priority” phrases remain prose.
+
+Validation treats parsed labels as layout, rather than factual amounts, then compares the contents of each item as well as the whole transcript. Missing items and clear reordering fail validation; currency, amounts, names, negation and boundaries remain checked within their original item. These checks are conservative safeguards, not a proof of arbitrary semantic equivalence.
+
+Action record: wrote and observed the failing fallback test first; added six focused core list checks; added a native-normalization integration check; exercised English/Russian list fixtures with the actual local editor. Final combined verification is recorded in `.build/list-validation.log`. No new model, dependency, UI or network service is introduced by this change.
+
+Combined verification passed all 73 checks (60 core, 13 integration), including the fourteen real-editor fixtures. Installation uses the existing transactional packaging script and the installed process/build identity is checked separately. This backend change adds no new visual UI.

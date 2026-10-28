@@ -8,6 +8,7 @@ public enum PolishValidator {
         case empty, tooLong, tooShort, numbersChanged, datesChanged
         case negationChanged, conditionChanged, beginningLost, wordLoss, endingLost
         case namesChanged, filenamesChanged, unbalancedQuotes
+        case listItemsChanged
     }
 
     public static func rejection(input: String, output: String) -> Rejection? {
@@ -15,12 +16,28 @@ public enum PolishValidator {
         if output.count > input.count * 3 { return .tooLong }
         if output.count < input.count / 4 { return .tooShort }
 
-        let reference = SpokenCorrections.resolve(input)
-        if let rejection = factRejection(reference: reference, output: output) { return rejection }
+        let original = SpokenCorrections.resolve(input)
+        if let rejection = listRejection(input: original, output: output) { return rejection }
+        let reference = DictationLists.contentForValidation(original)
+        let content = DictationLists.contentForValidation(output)
+        if let rejection = factRejection(reference: reference, output: content) { return rejection }
         let before = words(reference)
-        let after = words(output)
+        let after = words(content)
         if let rejection = languageRejection(reference: reference, before: before, after: after) { return rejection }
         return boundaryRejection(before: before, after: after)
+    }
+
+    private static func listRejection(input: String, output: String) -> Rejection? {
+        guard let original = DictationLists.parse(input) else { return nil }
+        guard let edited = DictationLists.parse(output), edited.items.count == original.items.count else { return .listItemsChanged }
+        for (before, after) in zip(original.items, edited.items) {
+            let source = words(before)
+            let result = words(after)
+            if factRejection(reference: before, output: after) != nil ||
+                languageRejection(reference: before, before: source, after: result) != nil ||
+                boundaryRejection(before: source, after: result) != nil { return .listItemsChanged }
+        }
+        return nil
     }
 
     private static func factRejection(reference: String, output: String) -> Rejection? {

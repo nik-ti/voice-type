@@ -13,6 +13,7 @@ VoiceType is a macOS menu-bar dictation app. Hold a hotkey, speak, and release t
 - **Polished mode** uses Qwen3 4B Instruct locally to correct English/Russian grammar, including short takes. Explicit date/number repairs, filename spellings, and high-confidence compound subjects are prepared before model editing. Unavailable, busy, slow, or rejected output falls back to rules.
 - Completed prose is copied with one trailing space so the next dictation does not run into it. History stays clean. Literal filenames are copied without a forced sentence period.
 - `Cloud. Md.` is recognized as the known filename `CLAUDE.md`; common spoken extensions such as `package dot JSON` become `package.json`. Explicit `quote … end quote` and Russian quotation commands become quotation marks.
+- Explicit spoken lists such as “Here's the list of constraints. Number one … Number two …” become an introduction ending in a colon and separate numbered lines. This works in Polished fallback too. Ordinary phrases such as “my number one priority” remain prose, and factual amounts inside list items remain protected.
 - English and Russian are supported; Parakeet v3 supports additional European languages. Quality varies by language and microphone.
 
 Grant Microphone and Accessibility permission when requested. If automatic paste is unavailable, the text stays on the clipboard for Command+V. Switching to another app during processing intentionally leaves the text copied instead of typing into the wrong app.
