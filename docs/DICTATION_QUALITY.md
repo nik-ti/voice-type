@@ -31,12 +31,12 @@ Hardware: Apple M5, 24 GB memory. Models run on this Mac; synthetic audio is gen
 | MLX peak allocation | 2,891,617,404 bytes; excludes CoreML and other app/process memory |
 | Original encoder replay | English 0.156s; Russian 0.126s after load |
 | Rebuilt encoder replay | English 0.252s; Russian 0.137s after load; required instructions/dates preserved |
-| Automated suite | 54 core and 8 integration checks, zero failures in the full quality run; model smoke is also opt-in |
+| Automated suite | All 62 checks pass with the three local-model/replay opt-ins enabled; no skips or failures |
 | Packaging failure test | Passed |
 
 Timing includes local fixture preparation/edit validation where applicable, excludes microphone capture and physical paste, and is not a broad accuracy or speed benchmark. The two encoder replays cannot measure a population word-error rate. The four-second optional editing deadline prevents unbounded waiting; slower, busy or rejected edits still use fallback. Long dictations can exceed this budget.
 
-Commands and fixture expectations are in `SPEC.md` and the quality test files. Local validation logs are under ignored `.build/quality-validation.log` and `.build/model-smoke.log`; fixture text printed there is synthetic/public. Routine application logs never include transcript contents.
+Commands and fixture expectations are in `SPEC.md` and the quality test files. Local validation logs are under ignored `.build/final-quality-validation.log`, `.build/quality-validation.log` and `.build/model-smoke.log`; fixture text printed there is synthetic/public. Routine application logs never include transcript contents.
 
 ## NVIDIA Nemotron 3.5 Transcribe
 
@@ -52,6 +52,7 @@ Wispr’s cloud infrastructure and latency engineering help explain its responsi
 2. Compared 0.6B, 1.7B and 4B editors on the same text; selected the 4B quality result.
 3. Added focused cleanup/validation regression checks and executed the real local models.
 4. Compared original and rebuilt recognition encoders on identical synthetic audio.
-5. Updated implementation and documentation; release packaging and native UI verification are the final steps.
+5. Updated implementation and README/specification documentation. Packaged and installed `/Applications/VoiceType.app`; validated its resources and ad-hoc signature. Confirmed the installed process runs and logs successful polish-model warmup.
+6. Attempted native UI inspection through the computer-use tool. App selection by full path launches the app, but accessibility inspection repeatedly times out; no screenshot or Preferences-window verification is claimed.
 
-Live microphone, Bluetooth, sleep/wake, and insertion into another app remain manual verification. General speech accuracy and Wispr-equivalent latency are not claimed from these checks.
+Live microphone, Bluetooth, sleep/wake, insertion into another app and native UI appearance remain manual verification. General speech accuracy and Wispr-equivalent latency are not claimed from these checks. Optional complexity/duplication/mutation CLI tools named in the workspace principles are not installed; regression checks and manual code review were used.
