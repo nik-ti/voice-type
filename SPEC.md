@@ -26,6 +26,7 @@ FAILURE:
 - Cleanup turns Russian digits into English words, changes legitimate "ill", damages "uh-huh", or removes grammatical "had had".
 - Polished drops the opening instruction, keeps a retracted budget/date, changes an amount in an intentional contrast, or leaves the supplied grammar fixture broken.
 - Model/rules results are mislabeled, fallback has no reason, or stronger-model speed is claimed without running it on this Mac.
+- Normalization turns an unambiguous duration such as "ten second video" into an ordinal such as "12th video", or a duration fix damages a genuine ordinal.
 - Failed permission/focus checks still post paste keys; logs falsely claim insertion was verified.
 - The start/stop cues are suppressed merely because Bluetooth is the output, or the waveform stays behind the app receiving dictation.
 - Per-take changes to the macOS default input race Core Audio teardown and can crash the process.
@@ -78,7 +79,7 @@ Quality continuation: run failing real-model grammar/correction checks; improve 
 Updated: 2026-10-28
 - Built: session-owned startup/recording/processing; cancellation-safe polish deadline; idle warmup; sample-rate-safe audio capture; guarded paste; delivery before history; stage timing; transactional packaging; cleanup fidelity fixes; audible cues; cross-app waveform panel; stable input routing.
 - Built quality update: Qwen3 4B Instruct; a full grammar editing prompt with transcript/data separation; explicit number/weekday repair preparation; short-take editing; facts/boundaries validation; known filenames and spoken quotation commands; readable paragraph fallback; trailing insertion space; rebuilt Parakeet encoder; reason-coded fallback logs.
-- Verified: all 62 Swift checks pass with all model/replay opt-ins enabled, including eleven editing fixtures and English/Russian synthetic audio. Packaging failure protection passes. The release bundle installs in `/Applications`, validates its signature/resources, launches, and logs successful model warmup.
+- Verified: all 65 Swift checks pass with all model/replay opt-ins enabled, including twelve editing fixtures, duration/ordinal normalization regressions and English/Russian synthetic audio. Packaging failure protection passes. Release packaging installs in `/Applications` and validates its signature/resources.
 - Measured on this Apple M5/24 GB: editing about 0.4–1.9s for shorter prose and 3.46s for the 100-word proposal; literal filename about 2ms. New encoder replay about 0.14–0.25s after load. Peak MLX allocation 2.89 GB, not whole-app RAM. These figures exclude live microphone, insertion, Bluetooth, idle and sleep/wake behavior.
-- Release state: implementation and local-model verification complete. Native UI inspection times out in the computer-use tool; screenshots, live microphone, Bluetooth and physical insertion remain unverified. See `docs/DICTATION_QUALITY.md` for the release evidence and limits.
+- Duration followup: reproduced "Make a ten second video" → "Make 12th video" directly in the native NeMo formatter. Unambiguous duration spans are now normalized separately and protected during sentence normalization; genuine ordinals and unrelated normalization stay intact. This fixes the shared recognition stage without changing either cleanup mode's rules.
 - Watch out for: the bundle is ad-hoc signed, so replacing it can require Accessibility permission to be enabled again.

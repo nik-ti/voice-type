@@ -99,7 +99,7 @@ class TranscriptionService: ObservableObject {
             language: nil
         )
         timing.mark("speech_recognition")
-        let written = TextNormalizer.shared.normalizeSentence(result.text)
+        let written = TranscriptNormalizer.normalize(result.text)
         timing.mark("normalization")
         return written
 #else

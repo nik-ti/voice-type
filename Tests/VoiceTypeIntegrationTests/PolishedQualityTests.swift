@@ -73,6 +73,7 @@ final class PolishedQualityTests: XCTestCase {
             ("direct-speech", "Sarah said quote it looks great, but can we make the introduction shorter? end quote", .english,
              ["sarah said", "introduction shorter?"], []),
             ("literal-filename", "Cloud. Md.", .english, ["claude.md"], ["cloud"]),
+            ("duration", "Make a 10-second video.", .english, ["10-second video"], ["12th"]),
             ("unseen-grammar", "Him and Olivia was reviewing the estimate, and they thinks the documents is ready.", .english,
              ["olivia", "were reviewing", "documents", "ready"], ["him and", "they thinks", "documents is"]),
             ("unseen-russian", "Эти документы уже готова, но мы ещё не проверила адреса. Не отправляй письмо, если клиент не подтвердил дату.", .russian,

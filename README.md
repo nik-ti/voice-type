@@ -54,6 +54,8 @@ Four seconds is the polish budget, **not a promise for total transcription time*
 
 The speech model remains Parakeet v3, using the rebuilt linear INT8 encoder (`int8V2`) that fixes a documented upstream token-corruption case. Model downloads are automatic; the new grammar weights are approximately 2.3 GB and the rebuilt speech encoder approximately 0.6 GB. [Quality checks and model research](docs/DICTATION_QUALITY.md) explain what was measured and what remains unverified.
 
+Duration phrases are protected before native number normalization: `ten second video` becomes `10-second video`, rather than the incorrect `12th video`. Genuine ordinals such as `twelfth video` remain ordinals. This shared recognition-stage repair applies before either cleanup mode.
+
 ## Diagnostics
 
 ```sh

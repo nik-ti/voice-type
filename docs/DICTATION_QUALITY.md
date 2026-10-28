@@ -26,12 +26,12 @@ Hardware: Apple M5, 24 GB memory. Models run on this Mac; synthetic audio is gen
 |---|---|
 | Original 0.6B pipeline | Reproduced unresolved dates/budgets, short grammar bypass and Russian editing failures |
 | 1.7B comparison | Faster, but earlier held-out Russian grammar stayed broken and one run introduced “Have Adobe approved…” |
-| Selected 4B editor | Eleven fixtures pass: long proposal, corrected instructions, short grammar, intentional contrast, Russian correction/grammar, filename, quoted speech, literal filename and two additional grammar cases |
+| Selected 4B editor | Twelve fixtures pass: long proposal, corrected instructions, short grammar, intentional contrast, Russian correction/grammar, filename, quoted speech, literal filename, duration and two additional grammar cases |
 | Selected editing latency | About 0.4–1.9s for short prose; 3.46s for the long proposal; around 2ms for a literal filename |
 | MLX peak allocation | 2,891,617,404 bytes; excludes CoreML and other app/process memory |
 | Original encoder replay | English 0.156s; Russian 0.126s after load |
 | Rebuilt encoder replay | English 0.252s; Russian 0.137s after load; required instructions/dates preserved |
-| Automated suite | All 62 checks pass with the three local-model/replay opt-ins enabled; no skips or failures |
+| Automated suite | All 65 checks pass with the three local-model/replay opt-ins enabled; no skips or failures |
 | Packaging failure test | Passed |
 
 Timing includes local fixture preparation/edit validation where applicable, excludes microphone capture and physical paste, and is not a broad accuracy or speed benchmark. The two encoder replays cannot measure a population word-error rate. The four-second optional editing deadline prevents unbounded waiting; slower, busy or rejected edits still use fallback. Long dictations can exceed this budget.
@@ -56,3 +56,13 @@ Wispr’s cloud infrastructure and latency engineering help explain its responsi
 6. Attempted native UI inspection through the computer-use tool. App selection by full path launches the app, but accessibility inspection repeatedly times out; no screenshot or Preferences-window verification is claimed.
 
 Live microphone, Bluetooth, sleep/wake, insertion into another app and native UI appearance remain manual verification. General speech accuracy and Wispr-equivalent latency are not claimed from these checks. Optional complexity/duplication/mutation CLI tools named in the workspace principles are not installed; regression checks and manual code review were used.
+
+## Duration versus ordinal repair
+
+A later test reproduced the exact reported error without speech recognition or the editor: the linked NeMo normalizer changed `Make a ten second video.` to `Make 12th video.` It also changed written `10 second` to `10 2nd`. This is a reproducible post-recognition formatting defect; it does not establish what the recognizer heard in the user's individual take.
+
+`TranscriptNormalizer` now shields unambiguous duration spans while native normalization handles the rest. It converts each number separately through the existing native engine, preserves the duration unit, and hyphenates singular duration modifiers before nouns. Temporary markers use a separate Unicode plane from the dependency's own masking protocol. Original private-use characters are escaped to prevent collisions.
+
+Checks include ten/fifteen/twenty-five seconds, decimal durations, minutes, existing hyphens, capitalization, genuine `twelfth`/`second` ordinals, dates, money and unchanged Russian normalization. The ambiguous bare wording `twenty second` retains the native ordinal interpretation; explicit `20 second`, `20-second` and plural `twenty seconds` are duration forms. We do not blindly rewrite `12th` into a duration.
+
+Action record: first captured the native formatter's failing output; added duration/ordinal regression checks; implemented the boundary repair without changing dependencies; ran all 65 model-enabled checks successfully. The local followup test log is `.build/duration-validation.log`. Release installation follows the same validated packaging process.
