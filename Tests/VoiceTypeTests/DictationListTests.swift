@@ -19,6 +19,21 @@ final class DictationListTests: XCTestCase {
                        "1. Keep the quote.\n2. Call Sarah.")
     }
 
+    func testListDoesNotRequireASpecificIntroductionWord() {
+        let examples = [
+            "We're gonna need three things happen. Number 1, fix the backend. Number 2, install the new model, number 3, rewrite the entire content.",
+            "Please do the following: number one, fix the backend; number two, install the new model.",
+            "Нам нужно сделать две вещи. Номер один, исправить сервер. Номер два, установить модель.",
+        ]
+        for input in examples {
+            let output = DictationLists.format(input)
+            XCTAssertNotEqual(output, input)
+            XCTAssertTrue(output.contains(":\n\n1. "), output)
+            XCTAssertTrue(output.contains("\n2. "), output)
+            XCTAssertNil(PolishValidator.rejection(input: input, output: output))
+        }
+    }
+
     func testOrdinaryProseAndIncompleteSequencesAreUntouched() {
         let examples = [
             "My number one priority is to finish today.",
@@ -26,6 +41,8 @@ final class DictationListTests: XCTestCase {
             "Here's a list of constraints. Number one, Keep the video short. Number three, Write tests.",
             "Product number one is ready. Product number two arrives tomorrow.",
             "Here's a list of phrases: \"number one\" and \"number two\".",
+            "The list contains product number one and product number two.",
+            "My number one priority is the backend. Number two is the UI.",
         ]
         for example in examples { XCTAssertEqual(DictationLists.format(example), example) }
     }

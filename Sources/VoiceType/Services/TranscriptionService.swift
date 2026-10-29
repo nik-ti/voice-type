@@ -8,7 +8,7 @@ import FluidAudio
 #endif
 
 /// Speech-to-text via FluidAudio Parakeet TDT v3 (25 European languages,
-/// auto-detected).
+/// auto-detected unless a recognition language preference is supplied).
 class TranscriptionService: ObservableObject {
     @Published var isLoaded = false
     @Published var isTranscribing = false
@@ -62,8 +62,8 @@ class TranscriptionService: ObservableObject {
 #endif
     }
 
-    func transcribe(_ audioBuffer: AVAudioPCMBuffer) async throws -> String {
-        print("🔊 TranscriptionService.transcribe called (auto language)")
+    func transcribe(_ audioBuffer: AVAudioPCMBuffer, language: DictationLanguage = .automatic) async throws -> String {
+        print("🔊 TranscriptionService.transcribe called (language=\(language.rawValue))")
         print("📊 Input buffer: \(audioBuffer.frameLength) frames at \(audioBuffer.format.sampleRate)Hz")
 
         await MainActor.run { self.isTranscribing = true }
@@ -96,7 +96,7 @@ class TranscriptionService: ObservableObject {
         let result = try await asrManager.transcribe(
             speechSamples,
             decoderState: &decoderState,
-            language: nil
+            language: language.recognitionHint
         )
         timing.mark("speech_recognition")
         let written = TranscriptNormalizer.normalize(result.text)

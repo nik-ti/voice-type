@@ -46,6 +46,10 @@ class AppState: ObservableObject {
     }
 
     @Published var availableInputDevices: [AudioInputDevice] = []
+
+    @Published var dictationLanguage: DictationLanguage {
+        didSet { preferences.set(dictationLanguage.rawValue, forKey: "dictationLanguage") }
+    }
     
     @Published var isPolishedMode: Bool {
         didSet {
@@ -87,6 +91,7 @@ class AppState: ObservableObject {
     private var startTask: Task<Void, Never>?
     private var activity: NSObjectProtocol?
     private var pasteTargetApp: NSRunningApplication?
+    private var recordingLanguage: DictationLanguage = .automatic
     
     // MARK: - Services
     
@@ -140,6 +145,8 @@ class AppState: ObservableObject {
             self.autoPaste = preferences.bool(forKey: "autoPaste")
         }
         self.launchAtLogin = preferences.bool(forKey: "launchAtLogin")
+        self.dictationLanguage = preferences.string(forKey: "dictationLanguage")
+            .flatMap(DictationLanguage.init(rawValue:)) ?? .automatic
 
         if let savedUID = preferences.string(forKey: "selectedInputDeviceUID") {
             self.selectedInputDeviceUID = savedUID
@@ -186,6 +193,7 @@ class AppState: ObservableObject {
             return false
         }
         guard let id = session.begin() else { return false }
+        recordingLanguage = dictationLanguage
         isStarting = true
         pasteTargetApp = NSWorkspace.shared.frontmostApplication
         if pasteTargetApp == NSRunningApplication.current {
@@ -262,7 +270,7 @@ class AppState: ObservableObject {
         timing.mark("recording_stopped")
 
         do {
-            let text = try await transcriptionService.transcribe(buffer)
+            let text = try await transcriptionService.transcribe(buffer, language: recordingLanguage)
             timing.mark("transcription")
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 showError("No speech detected. Please try again.")

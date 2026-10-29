@@ -28,6 +28,7 @@ FAILURE:
 - Model/rules results are mislabeled, fallback has no reason, or stronger-model speed is claimed without running it on this Mac.
 - Normalization turns an unambiguous duration such as "ten second video" into an ordinal such as "12th video", or a duration fix damages a genuine ordinal.
 - An explicit list introduction followed by sequential spoken item markers stays a prose block, loses an item, or mistakes item labels for factual amounts.
+- An optional recognition language choice is lost on restart, does not reach the recognizer, changes an already-started take, or changes Auto's existing multilingual behavior.
 - Failed permission/focus checks still post paste keys; logs falsely claim insertion was verified.
 - The start/stop cues are suppressed merely because Bluetooth is the output, or the waveform stays behind the app receiving dictation.
 - Per-take changes to the macOS default input race Core Audio teardown and can crash the process.
@@ -56,6 +57,7 @@ FAILURE:
 - Show the waveform immediately in a non-activating, cross-space panel and play cues on every accepted recording once capture starts/stops.
 - Follow the stable macOS default input during each take. Apply an explicit Preferences choice once instead of changing and restoring the system input around every recording.
 - Build release before packaging, stage the new bundle, validate resources/signature, then replace the old bundle.
+- Auto remains the recognition default. Explicit English/Russian choices pass the pinned library's script-filter hint; they are not general text prompts or guaranteed language locks. Keep automatic cleanup-language detection based on the result.
 
 ## Build sequence
 1. Write failing cleanup, lifecycle, deadline and delivery/paste policy regressions.
@@ -68,11 +70,11 @@ Quality continuation: run failing real-model grammar/correction checks; improve 
 ## How to run and test
 - Tests: `swift test --disable-automatic-resolution`
 - Quality fixtures: `VOICETYPE_POLISH_QUALITY=1 VOICETYPE_METALLIB=/Applications/VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib swift test --filter PolishedQualityTests`; optional `VOICETYPE_POLISH_MODEL=0.6b|1.7b|4b` compares editors.
-- Recorded-file replay: `VOICETYPE_SPEECH_QUALITY=/absolute/directory/with/english.aiff/and/russian.aiff swift test --filter SpeechQualityTests`; `VOICETYPE_SPEECH_ENCODER=original` compares the earlier encoder.
-- Installed-model smoke test: `VOICETYPE_MODEL_SMOKE=1 VOICETYPE_METALLIB="$PWD/VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib" VOICETYPE_SMOKE_AUDIO=/tmp/voicetype-smoke.aiff swift test --skip-build --filter LocalModelSmokeTests`
+- Recorded-file replay: `VOICETYPE_SPEECH_QUALITY=/absolute/directory/with/english.aiff/russian.aiff/technical.aiff swift test --filter SpeechQualityTests`; `VOICETYPE_SPEECH_ENCODER=original` compares the earlier encoder. Generate the public technical fixture with `say -v Samantha -o technical.aiff 'spec dot pie file.'`.
+- Installed-model smoke test: `VOICETYPE_MODEL_SMOKE=1 VOICETYPE_METALLIB=/Applications/VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib VOICETYPE_SMOKE_AUDIO=/tmp/voicetype-smoke.aiff swift test --skip-build --filter LocalModelSmokeTests`
 - Packaging failure test: `python3 -m unittest discover -s Tests/PackagingTests`
 - Package: `./package_app.sh`
-- Run: `open VoiceType.app`
+- Run: `open /Applications/VoiceType.app`
 - Logs: `log stream --style compact --predicate 'subsystem == "com.nikti.VoiceType"'`
 - Manual matrix: short/long English and Russian; 20 consecutive takes; early hotkey release; Bluetooth connect/disconnect; 5/15 minute idle; sleep/wake; missing accessibility permission; history write failure; target app closes/switches.
 
@@ -80,8 +82,9 @@ Quality continuation: run failing real-model grammar/correction checks; improve 
 Updated: 2026-10-28
 - Built: session-owned startup/recording/processing; cancellation-safe polish deadline; idle warmup; sample-rate-safe audio capture; guarded paste; delivery before history; stage timing; transactional packaging; cleanup fidelity fixes; audible cues; cross-app waveform panel; stable input routing.
 - Built quality update: Qwen3 4B Instruct; a full grammar editing prompt with transcript/data separation; explicit number/weekday repair preparation; short-take editing; facts/boundaries validation; known filenames and spoken quotation commands; readable paragraph fallback; trailing insertion space; rebuilt Parakeet encoder; reason-coded fallback logs.
-- Verified: all 73 checks pass with local-model and replay opt-ins enabled: 60 core checks and 13 integration checks, including fourteen editing fixtures. List coverage includes the unavailable-model path, native number normalization, English/Russian model output, negative cases, and item/fact preservation.
+- Verified: all 78 checks pass with local-model and replay opt-ins enabled: 61 core checks and 17 integration checks, including fifteen editing fixtures. Coverage includes unavailable-model/native-normalization list paths, English/Russian editing, list negatives/fact preservation, saved-language/session consistency and technical filename replay. Packaging failure test passes separately.
 - Measured on this Apple M5/24 GB: editing about 0.4–1.9s for shorter prose and 3.46s for the 100-word proposal; literal filename about 2ms. New encoder replay about 0.14–0.25s after load. Peak MLX allocation 2.89 GB, not whole-app RAM. These figures exclude live microphone, insertion, Bluetooth, idle and sleep/wake behavior.
 - Duration followup: reproduced "Make a ten second video" → "Make 12th video" directly in the native NeMo formatter. Unambiguous duration spans are now normalized separately and protected during sentence normalization; genuine ordinals and unrelated normalization stay intact. This fixes the shared recognition stage without changing either cleanup mode's rules.
-- List followup: explicit sequential English/Russian markers get colon/numbered-line formatting before editing; fallback cleans each item separately. Validation distinguishes layout labels from factual numbers and checks items individually. Ordinary prose and incomplete/quoted sequences are left unchanged. Use the transactional packaging script for installation; `.build/release-verification.json` records the installed build.
+- List followup: explicit sequential English/Russian markers get colon/numbered-line formatting before editing; fallback cleans each item separately. Recognition now uses clause boundaries, rather than requiring keywords such as "list" in the introduction; the exact "We're gonna need three things happen" fixture passes. Validation protects each item's facts. Ordinary/incomplete/quoted sequences remain prose.
+- Language followup: persisted Auto/English/Russian preference reaches the recognition call and stays fixed for each take. Synthetic "spec dot pie file" returns `Spec.py file` in Auto and English; this does not reproduce or explain the user's microphone failure. Native app accessibility inspection times out, so the new Preferences control is not visually verified. Use transactional packaging; `.build/release-verification.json` records the installed build.
 - Watch out for: the bundle is ad-hoc signed, so replacing it can require Accessibility permission to be enabled again.

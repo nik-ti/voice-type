@@ -26,12 +26,12 @@ Hardware: Apple M5, 24 GB memory. Models run on this Mac; synthetic audio is gen
 |---|---|
 | Original 0.6B pipeline | Reproduced unresolved dates/budgets, short grammar bypass and Russian editing failures |
 | 1.7B comparison | Faster, but earlier held-out Russian grammar stayed broken and one run introduced “Have Adobe approved…” |
-| Selected 4B editor | Fourteen fixtures pass: long proposal, corrected instructions, short grammar, intentional contrast, Russian correction/grammar, filename, quoted speech, literal filename, duration, English/Russian lists and two additional grammar cases |
+| Selected 4B editor | Fifteen fixtures pass: long proposal, corrected instructions, short grammar, intentional contrast, Russian correction/grammar, filename, quoted speech, literal filename, duration, English/Russian lists, the alternate list introduction and two additional grammar cases |
 | Selected editing latency | About 0.4–1.9s for short prose; 3.46s for the long proposal; around 2ms for a literal filename |
 | MLX peak allocation | 2,891,617,404 bytes; excludes CoreML and other app/process memory |
 | Original encoder replay | English 0.156s; Russian 0.126s after load |
 | Rebuilt encoder replay | English 0.252s; Russian 0.137s after load; required instructions/dates preserved |
-| Automated suite | All 73 checks pass with the three local-model/replay opt-ins enabled; no skips or failures |
+| Automated suite | All 78 checks pass with the three local-model/replay opt-ins enabled; no skips or failures |
 | Packaging failure test | Passed |
 
 Timing includes local fixture preparation/edit validation where applicable, excludes microphone capture and physical paste, and is not a broad accuracy or speed benchmark. The two encoder replays cannot measure a population word-error rate. The four-second optional editing deadline prevents unbounded waiting; slower, busy or rejected edits still use fallback. Long dictations can exceed this budget.
@@ -69,7 +69,7 @@ Action record: first captured the native formatter's failing output; added durat
 
 ## Explicit spoken lists
 
-The old unavailable-model path reproduced the user's list as a single paragraph, including a period after its introduction. The repair recognizes an introduction announcing a list plus sequential `number one/two…`, numeric equivalents, or Russian `пункт/номер` markers. A sequence without an introduction is also accepted when it clearly starts with those markers. It requires at least two nonempty, consecutive items beginning at one; incomplete sequences and quoted marker phrases are not guessed into a list.
+The old unavailable-model path reproduced the user's list as a single paragraph, including a period after its introduction. The repair recognizes sequential `number one/two…`, numeric equivalents, or Russian `пункт/номер` markers starting clauses. A sequence without an introduction is also accepted when it clearly starts with those markers. It requires at least two nonempty, consecutive items beginning at one; incomplete sequences and quoted marker phrases are not guessed into a list.
 
 The introduction receives a colon and each item gets its own numbered line. Question/exclamation introductions retain that punctuation. The local model is explicitly told to keep the full wording and order. Fallback cleans each parsed item separately so whole-text whitespace cleanup cannot flatten the list again. Ordinary “number one priority” phrases remain prose.
 
@@ -78,3 +78,15 @@ Validation treats parsed labels as layout, rather than factual amounts, then com
 Action record: wrote and observed the failing fallback test first; added six focused core list checks; added a native-normalization integration check; exercised English/Russian list fixtures with the actual local editor. Final combined verification is recorded in `.build/list-validation.log`. No new model, dependency, UI or network service is introduced by this change.
 
 Combined verification passed all 73 checks (60 core, 13 integration), including the fourteen real-editor fixtures. Installation uses the existing transactional packaging script and the installed process/build identity is checked separately. This backend change adds no new visual UI.
+
+## List generalization and recognition language
+
+The next user fixture, "We're gonna need three things happen. Number 1, fix the backend. Number 2, install the new model, number 3, rewrite the entire content," exposed an overly restrictive introduction keyword check. New regressions failed before the repair. Sequential labels now require clause boundaries instead of words such as "list" or "constraints"; ordinary product-number references stay prose. The real editor produced "We're gonna need three things to happen:" and all three numbered items in 0.99s. The unavailable-model path also preserves the structure.
+
+Parakeet receives audio, not the editor's proofreading prompt. It detects languages automatically; a short phonetic filename has less context to distinguish languages. That is a plausible explanation for the reported Cyrillic output, but the original audio and intermediate output are unavailable, so the failing stage is not established. The editor's instruction to preserve language can then retain an already-Cyrillic transcript. [NVIDIA model documentation](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3).
+
+Preferences now offers Auto (unchanged default), English and Russian. The pinned FluidAudio decoder implements these choices as Latin/Cyrillic token filtering using its available top candidates. It does not accept a natural-language prompt, distinguish all languages sharing an alphabet, or guarantee a matching candidate. A fixed script can affect foreign names and mixed-language filenames, so Auto remains available. The choice persists and is captured at recording start. No additional model or service is introduced.
+
+Synthetic Samantha audio saying "spec dot pie file" returned `Spec.py file` with both Auto and English. Existing English/Russian audio replays also pass. This sample did not reproduce the user's Cyrillic failure and is not proof of accuracy for their microphone or accent. The new Preferences control retains the existing native form design; computer-use app inspection still times out, so no screenshot verification is claimed.
+
+Action record: reproduced the new list failure; replaced the keyword restriction with clause-boundary recognition; exercised fallback and the actual local editor; added saved-language/recording-consistency checks and recognition replay; updated README/specification. All 78 checks pass (61 core, 17 integration), including fifteen real-editor fixtures, with no skips. Packaging failure checks pass separately. Combined verification is recorded in `.build/language-list-validation.log`; installation follows the same transactional packaging process.

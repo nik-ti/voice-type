@@ -13,12 +13,14 @@ VoiceType is a macOS menu-bar dictation app. Hold a hotkey, speak, and release t
 - **Polished mode** uses Qwen3 4B Instruct locally to correct English/Russian grammar, including short takes. Explicit date/number repairs, filename spellings, and high-confidence compound subjects are prepared before model editing. Unavailable, busy, slow, or rejected output falls back to rules.
 - Completed prose is copied with one trailing space so the next dictation does not run into it. History stays clean. Literal filenames are copied without a forced sentence period.
 - `Cloud. Md.` is recognized as the known filename `CLAUDE.md`; common spoken extensions such as `package dot JSON` become `package.json`. Explicit `quote … end quote` and Russian quotation commands become quotation marks.
-- Explicit spoken lists such as “Here's the list of constraints. Number one … Number two …” become an introduction ending in a colon and separate numbered lines. This works in Polished fallback too. Ordinary phrases such as “my number one priority” remain prose, and factual amounts inside list items remain protected.
+- Explicit spoken lists such as “Here's the list of constraints” or “We need three things,” followed by “Number one … Number two …”, become an introduction ending in a colon and separate numbered lines. This works in Polished fallback too. Ordinary phrases such as “my number one priority” remain prose, and factual amounts inside list items remain protected.
 - English and Russian are supported; Parakeet v3 supports additional European languages. Quality varies by language and microphone.
 
 Grant Microphone and Accessibility permission when requested. If automatic paste is unavailable, the text stays on the clipboard for Command+V. Switching to another app during processing intentionally leaves the text copied instead of typing into the wrong app.
 
 Input selection is in Preferences. Auto follows the input selected in macOS System Settings. Choosing a microphone in VoiceType changes the Mac's default input once; the app does not switch it back and forth for every take. If the input changes during a take, VoiceType finishes that take using audio already captured; start a new recording for the new device.
+
+Preferences also has a **Recognition language** selector: Auto (the default), English, or Russian. Choose English to reduce Cyrillic guesses on short technical phrases such as `spec.py`; use Auto for mixed-language speech. The fixed choices prefer Latin or Cyrillic letters, so foreign names and filenames can be affected. This is a recognition hint, not a guarantee of correct spelling. Each recording keeps the language selected when it starts.
 
 ## Build and run
 

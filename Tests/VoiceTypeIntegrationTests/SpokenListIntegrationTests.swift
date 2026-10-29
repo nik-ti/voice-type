@@ -6,6 +6,20 @@ import VoiceTypeCore
 
 @MainActor
 final class SpokenListIntegrationTests: XCTestCase {
+    func testThreeThingsIntroductionSurvivesTheFullFallbackPath() async throws {
+        let input = "We're gonna need three things happen. Number 1, fix the backend. Number 2, install the new model, number 3, rewrite the entire content."
+        let recognized = TranscriptNormalizer.normalize(input)
+        let model = LLMService()
+        let output = try await model.processPolished(model.basicFormat(recognized, language: .english), language: .english)
+        XCTAssertTrue(output.contains(":\n\n1. "), output)
+        XCTAssertTrue(output.contains("\n2. "), output)
+        XCTAssertTrue(output.contains("\n3. "), output)
+        for fragment in ["fix the backend", "install the new model", "rewrite the entire content"] {
+            XCTAssertTrue(output.lowercased().contains(fragment), output)
+        }
+        XCTAssertEqual(model.lastFallbackReason, "model_not_ready")
+    }
+
     func testUnavailableModelStillFormatsEveryConstraint() async throws {
         let input = "Here's the list of constraints. Number 1, we have to make sure that the video is not too long. Number 2, we have to make sure proper tests are written beforehand. Number 3, the UI must be mobile friendly."
         let model = LLMService()

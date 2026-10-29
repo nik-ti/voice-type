@@ -78,6 +78,8 @@ final class PolishedQualityTests: XCTestCase {
              ["here's the list of constraints:", "1.", "2.", "3.", "video is not too long", "proper tests are written beforehand", "ui must be mobile"], ["number one", "number two", "number three"]),
             ("russian-list", "Вот список требований. Пункт один, Сохранить договор. Пункт два, Проверить адрес.", .russian,
              ["список требований:", "1.", "2.", "сохранить договор", "проверить адрес"], ["пункт один", "пункт два"]),
+            ("three-things-list", "We're gonna need three things happen. Number 1, fix the backend. Number 2, install the new model, number 3, rewrite the entire content.", .english,
+             ["three things", ":", "1.", "2.", "3.", "fix the backend", "install the new model", "rewrite the entire content"], ["number 1", "number 2", "number 3"]),
             ("unseen-grammar", "Him and Olivia was reviewing the estimate, and they thinks the documents is ready.", .english,
              ["olivia", "were reviewing", "documents", "ready"], ["him and", "they thinks", "documents is"]),
             ("unseen-russian", "Эти документы уже готова, но мы ещё не проверила адреса. Не отправляй письмо, если клиент не подтвердил дату.", .russian,
@@ -105,7 +107,7 @@ final class PolishedQualityTests: XCTestCase {
             if name == "long-proposal" {
                 XCTAssertTrue(output.contains("\n\n"), "Separate the proposal, approval follow-up and total into paragraphs")
             }
-            if name == "spoken-list" {
+            if name == "spoken-list" || name == "three-things-list" {
                 for index in 1...3 { XCTAssertTrue(output.contains("\n\(index). "), "Keep each constraint on its own numbered line: \(output)") }
             }
             for fragment in required {

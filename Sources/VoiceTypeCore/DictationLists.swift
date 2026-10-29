@@ -42,11 +42,11 @@ public enum DictationLists {
     private static func makeList(_ text: String, matches: [NSTextCheckingResult], spoken: Bool) -> List? {
         guard matches.count >= 2, let first = matches.first, let start = Range(first.range, in: text)?.lowerBound else { return nil }
         let introduction = text[..<start].trimmingCharacters(in: .whitespacesAndNewlines)
-        if spoken, !introduction.isEmpty, introduction.range(of: introPattern, options: [.regularExpression, .caseInsensitive]) == nil { return nil }
         var items: [String] = []
         for (index, match) in matches.enumerated() {
             guard let label = Range(match.range(at: 1), in: text),
                   let marker = Range(match.range, in: text), number(String(text[label])) == index + 1 else { return nil }
+            if spoken, !startsListItem(text[..<marker.lowerBound]) { return nil }
             let end = index + 1 < matches.count ? Range(matches[index + 1].range, in: text)?.lowerBound : text.endIndex
             guard let end else { return nil }
             let item = text[marker.upperBound..<end].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,6 +60,13 @@ public enum DictationLists {
         Int(label) ?? numberWords[label.lowercased()]
     }
 
+    private static func startsListItem(_ prefix: Substring) -> Bool {
+        // Sequential labels must start a clause, rather than modify a noun such as "product number one".
+        prefix.isEmpty || prefix.range(of: #"[.!?:;,\n]\s*(?:(?:and|then|и|затем)\s+)?$"#,
+                                       options: [.regularExpression, .caseInsensitive]) != nil
+            || prefix.allSatisfy(\.isWhitespace)
+    }
+
     private static let numberWords: [String: Int] = {
         let groups = [
             ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"],
@@ -68,7 +75,6 @@ public enum DictationLists {
         ]
         return Dictionary(uniqueKeysWithValues: groups.flatMap { $0.enumerated().map { ($0.element, $0.offset + 1) } })
     }()
-    private static let introPattern = #"\b(?:list|constraints?|requirements?|steps?|rules?|items?|points?|список|ограничения|требования|пункты|шаги|правила)\b"#
     private static let writtenPattern = try? NSRegularExpression(pattern: #"(?m)^\h*([1-9]\d{0,2})[.)]\h+"#)
     private static let spokenPattern: NSRegularExpression? = {
         let labels = numberWords.keys.sorted { $0.count > $1.count }.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")

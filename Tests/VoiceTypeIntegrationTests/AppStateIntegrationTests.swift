@@ -27,7 +27,11 @@ private final class TestMicrophone: AudioCaptureService {
 }
 
 private final class TestRecognizer: TranscriptionService {
-    override func transcribe(_ buffer: AVAudioPCMBuffer) async throws -> String { "I feel ill today" }
+    var languages: [DictationLanguage] = []
+    override func transcribe(_ buffer: AVAudioPCMBuffer, language: DictationLanguage = .automatic) async throws -> String {
+        languages.append(language)
+        return "I feel ill today"
+    }
 }
 
 private final class TestHistory: PersistenceService {
@@ -47,6 +51,40 @@ private final class TestHistory: PersistenceService {
 
 @MainActor
 final class AppStateIntegrationTests: XCTestCase {
+    func testLanguagePreferenceIsSavedAndEachRecordingKeepsItsStartingLanguage() async {
+        let suite = "VoiceTypeTests.\(UUID())"
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        preferences.set(false, forKey: "autoPaste")
+        preferences.set("en", forKey: "dictationLanguage")
+        let recognizer = TestRecognizer()
+        let state = AppState(audioCaptureService: TestMicrophone(), transcriptionService: recognizer,
+                             persistenceService: TestHistory(databasePath: ":memory:"), preferences: preferences,
+                             clipboardWriter: { _ in 1 }, startCue: {}, stopCue: {})
+        state.isModelLoaded = true
+        defer { state.shutdown() }
+        XCTAssertEqual(state.dictationLanguage, .english)
+        XCTAssertTrue(state.startListening())
+        for _ in 0..<100 where !state.isListening { try? await Task.sleep(for: .milliseconds(5)) }
+        state.dictationLanguage = .russian
+        await state.stopListeningAndTranscribe()
+        XCTAssertEqual(recognizer.languages, [.english])
+        XCTAssertEqual(preferences.string(forKey: "dictationLanguage"), "ru")
+        XCTAssertTrue(state.startListening())
+        for _ in 0..<100 where !state.isListening { try? await Task.sleep(for: .milliseconds(5)) }
+        await state.stopListeningAndTranscribe()
+        XCTAssertEqual(recognizer.languages, [.english, .russian])
+    }
+
+    func testAutomaticLanguageDefaultAndRecognizerHints() {
+        let state = makeState(microphone: TestMicrophone(), history: TestHistory(databasePath: ":memory:")) { _ in 1 }
+        defer { state.shutdown() }
+        XCTAssertEqual(state.dictationLanguage, .automatic)
+        XCTAssertNil(DictationLanguage.automatic.recognitionHint)
+        XCTAssertEqual(DictationLanguage.english.recognitionHint, .english)
+        XCTAssertEqual(DictationLanguage.russian.recognitionHint, .russian)
+    }
+
     func testEarlyReleaseCleansUpRealCoordinator() async {
         let microphone = TestMicrophone()
         microphone.permissionDelay = 100_000_000

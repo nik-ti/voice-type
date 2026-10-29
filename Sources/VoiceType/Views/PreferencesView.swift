@@ -1,3 +1,5 @@
+// Presents native macOS preferences for dictation behavior, recognition language and microphone selection.
+// Changes are saved by AppState and take effect on the next recording.
 import SwiftUI
 import ServiceManagement
 
@@ -40,7 +42,12 @@ struct GeneralSettingsView: View {
             }
 
             Section {
-                Text("Language is detected automatically from what you say. English, Russian, and most other European languages work. Chinese, Japanese, Arabic, and similar languages are not supported by the local model.")
+                Picker("Recognition language", selection: $appState.dictationLanguage) {
+                    ForEach(DictationLanguage.allCases) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                }
+                Text("Auto supports English, Russian, and other European languages. Choose English for short technical phrases that come out in Cyrillic. Use Auto when mixing languages; a fixed choice can affect foreign names and filenames.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
