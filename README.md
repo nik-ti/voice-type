@@ -47,6 +47,7 @@ The pipeline is: stop capture → resample → speech recognition → basic clea
 - Start and stop cues play on the active output device. The recording waveform is a non-activating panel that follows the active screen and can appear above other apps and full-screen spaces.
 - Audio capture follows one stable system input for the whole take. VoiceType no longer changes the default input at recording start and restores it during Core Audio teardown.
 - Optional polishing has a four-second **waiting budget**, separate from the lifetime of model work. A timed-out worker stays unavailable until its GPU work finishes; requests never pile up behind it.
+- The polish model's GPU buffer cache is capped at 128 MB and emptied after every take. Without this, MLX hoards freed buffers until it fills most of RAM (17 GB after a week), and the Mac's swapping slows everything. The app should stay near 2–3 GB; check with `footprint $(pgrep -f VoiceType.app/Contents/MacOS)`.
 - The polish model warms after loading and when recording begins following at least a minute of model inactivity. There is no permanent keepalive timer. Active dictation uses a scoped macOS user-initiated activity.
 - Recording retains all samples after readiness, with session IDs rejecting stale callbacks. Audio from different hardware rates is never joined.
 - The redundant whole-recording VAD pass was removed to avoid a second serial model pass after release.

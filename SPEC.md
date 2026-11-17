@@ -22,6 +22,7 @@ FAILURE:
 - A second session overlaps processing or a stale result is pasted.
 - Audio recovery duplicates samples, mixes sample rates, or discards the first spoken syllable after ready.
 - Optional polishing waits for non-cooperative work beyond its deadline, or another inference overlaps unfinished GPU work.
+- GPU memory keeps growing across takes, so the app gets slower the longer it runs (20 varied polishes must return to the starting memory).
 - Saving history fails and prevents delivery, or every take reloads all history before pasting.
 - Cleanup turns Russian digits into English words, changes legitimate "ill", damages "uh-huh", or removes grammatical "had had".
 - Polished drops the opening instruction, keeps a retracted budget/date, changes an amount in an intentional contrast, or leaves the supplied grammar fixture broken.
