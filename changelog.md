@@ -2,6 +2,12 @@
 
 Notable VoiceType changes, newest first. Earlier history is summarized from the git log.
 
+## 2026-11-17 — Polished mode: model decides, not rules; upgrade to Qwen3 8B
+- Changed: Polished mode sends the raw recognized speech to the model with instructions and worked examples. The model now owns grammar, numbers, lists and paragraphs. Removed the regex list detector, spoken-correction and grammar pre-passes, paragraph splitter, filename rules and the 14-check validator that threw away good model edits (the cause of "the 1st part"). Regular mode is unchanged, and Polished falls back to it.
+- Changed: switched the model from Qwen3 4B Instruct to Qwen3 8B after a 40-case comparison (4B, 8B, Gemma 3 12B). The fixed instructions are cached between takes, so 8B averages about 0.95 s per take. The waiting limit now grows with length (3 s + 50 ms/word, max 12 s) instead of a flat 4 s.
+- Verified: comparison on this Mac (M5, 24 GB): old pipeline 22/34; new 8B 39/40 (mean 0.95 s, max 4.2 s); details in `docs/DICTATION_QUALITY.md`. Full suite with model opt-ins passed; memory test growth 36 MB with an empty buffer cache.
+- Remaining: casual "Me and Sarah were" is kept rather than rewritten. Live microphone use not yet re-checked after install. The first Polished take after the update waits for a 4.6 GB model download. The old 4B model (2.1 GB) is still cached in `~/Library/Caches/models` for rollback.
+
 ## 2026-11-16 — Fix the multi-day slowdown (GPU memory buildup)
 - Changed: the polish model's GPU buffer cache is now capped at 128 MB and emptied after every take. Before, MLX kept every freed scratch buffer "for reuse" with no practical limit. After 7 days the app held 17 GB of GPU memory on a 24 GB Mac, which pushed the system into 17 GB of swap and slowed every stage, including polishing past its 4-second budget into the rules fallback.
 - Changed: each polish logs `polish_gpu_memory active_mb=… cache_mb=…` (no dictated text) so any future buildup shows up in the logs.

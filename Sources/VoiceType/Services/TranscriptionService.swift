@@ -99,9 +99,8 @@ class TranscriptionService: ObservableObject {
             language: language.recognitionHint
         )
         timing.mark("speech_recognition")
-        let written = TranscriptNormalizer.normalize(result.text)
-        timing.mark("normalization")
-        return written
+        // Raw words, before any number rules: Polished mode gives these to the model, Regular mode normalizes them.
+        return result.text
 #else
         return "[Mock transcription - FluidAudio not linked]"
 #endif

@@ -3,9 +3,9 @@
 VoiceType is a local macOS dictation app. This repair addresses the October 4 audit while preserving existing uncommitted work and the English/Russian workflows.
 
 ## Contract
-GOAL: Deliver one complete transcript per accepted recording; keep optional polishing within a four-second waiting budget even when inference is slow. Measure each post-recording stage so idle regressions can be diagnosed.
+GOAL: Deliver one complete transcript per accepted recording; keep optional polishing within a waiting limit (3 seconds plus 50 ms per dictated word, at most 12 seconds) even when inference is slow. The app must stay as fast after days of running as after launch. Measure each post-recording stage so regressions can be diagnosed.
 
-October 28 quality goal: improve Polished grammar and explicit spoken corrections on English/Russian fixtures while retaining instructions, conditions, intended numbers, filenames and quotation boundaries. Copy finished prose with one trailing space. The user prefers balanced accuracy and speed and accepts a few seconds for better grammar; the measured editor replaces the old two-second polish limit with a four-second bound.
+November 17 Polished goal: the local model, not hard-coded rules, decides grammar, numbers, lists and paragraphs, the way competing apps (VoiceInk, Wispr Flow) do. Regular mode stays rule-based. The user prefers balanced accuracy and speed and accepts a few seconds for long dictation. Copy finished prose with one trailing space.
 
 CONSTRAINTS:
 - Free, on-device inference; existing Swift, FluidAudio and MLX dependencies.
@@ -26,9 +26,13 @@ FAILURE:
 - Saving history fails and prevents delivery, or every take reloads all history before pasting.
 - Cleanup turns Russian digits into English words, changes legitimate "ill", damages "uh-huh", or removes grammatical "had had".
 - Polished drops the opening instruction, keeps a retracted budget/date, changes an amount in an intentional contrast, or leaves the supplied grammar fixture broken.
+- Polished writes prose ordinals and small counts as digits ("the 1st part", "2nd option"), or writes amounts, times, dates and percentages as words.
+- Polished answers, obeys or replies to dictated questions and instructions instead of typing them.
+- Polished translates Russian into English, or drops words that carry meaning or tone ("maybe", "I think", "by the way").
+- The shipped Polished model passes fewer than all but two of the cleanup comparison cases.
 - Model/rules results are mislabeled, fallback has no reason, or stronger-model speed is claimed without running it on this Mac.
-- Normalization turns an unambiguous duration such as "ten second video" into an ordinal such as "12th video", or a duration fix damages a genuine ordinal.
-- An explicit list introduction followed by sequential spoken item markers stays a prose block, loses an item, or mistakes item labels for factual amounts.
+- Regular-mode normalization turns an unambiguous duration such as "ten second video" into an ordinal such as "12th video", or a duration fix damages a genuine ordinal.
+- Clear spoken enumeration ("number one… number two…", "first… second… third…") stays a prose block or loses an item; an ordinary sentence ("my number one priority", "first I went to the store and then…") becomes a list.
 - An optional recognition language choice is lost on restart, does not reach the recognizer, changes an already-started take, or changes Auto's existing multilingual behavior.
 - Failed permission/focus checks still post paste keys; logs falsely claim insertion was verified.
 - The start/stop cues are suppressed merely because Bluetooth is the output, or the waveform stays behind the app receiving dictation.
@@ -40,7 +44,7 @@ FAILURE:
 ## Built on top of
 - Existing pinned FluidAudio 0.15.7 (Apache-2.0): local ASR and audio conversion. Avoid a dependency upgrade during repair.
 - Existing pinned MLX Swift / MLX Swift LM (MIT): inference; use generateTask and await GPU completion for cleanup.
-- Qwen3-4B-Instruct-2507 4-bit (Apache-2.0): local editor selected after 0.6B, 1.7B and 4B comparisons; no dependency upgrades. Existing FluidAudio `.int8V2` selects a rebuilt Parakeet v3 encoder without changing the recognizer architecture.
+- Qwen3 8B 4-bit (Apache-2.0): local Polished model selected on 2026-11-17 over Qwen3 4B Instruct 2507 and Gemma 3 12B on the same cleanup cases; no dependency upgrades. Existing FluidAudio `.int8V2` selects a rebuilt Parakeet v3 encoder without changing the recognizer architecture.
 - Swift concurrency and Apple ProcessInfo: separate deadline delivery from worker lifetime; scope user-initiated activity to active work.
 - Research: https://github.com/ml-explore/mlx-swift-lm/blob/main/skills/mlx-swift-lm/references/generation.md
 - Research: https://forums.swift.org/t/does-taskgroup-cancelall-require-active-co-operation-to-finish-properly/75057
@@ -70,7 +74,8 @@ Quality continuation: run failing real-model grammar/correction checks; improve 
 
 ## How to run and test
 - Tests: `swift test --disable-automatic-resolution`
-- Quality fixtures: `VOICETYPE_POLISH_QUALITY=1 VOICETYPE_METALLIB=/Applications/VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib swift test --filter PolishedQualityTests`; optional `VOICETYPE_POLISH_MODEL=0.6b|1.7b|4b` compares editors.
+- Cleanup comparison (real model, 40 cases, writes `.build/cleanup-eval/<model>-model-first.json`): `VOICETYPE_CLEANUP_EVAL=1 VOICETYPE_METALLIB=/Applications/VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib swift test --filter CleanupComparisonTests`; optional `VOICETYPE_EVAL_MODEL=8b|4b|gemma12b`.
+- Memory check: same variables with `VOICETYPE_POLISH_QUALITY=1 … --filter PolishMemoryTests`.
 - Recorded-file replay: `VOICETYPE_SPEECH_QUALITY=/absolute/directory/with/english.aiff/russian.aiff/technical.aiff swift test --filter SpeechQualityTests`; `VOICETYPE_SPEECH_ENCODER=original` compares the earlier encoder. Generate the public technical fixture with `say -v Samantha -o technical.aiff 'spec dot pie file.'`.
 - Installed-model smoke test: `VOICETYPE_MODEL_SMOKE=1 VOICETYPE_METALLIB=/Applications/VoiceType.app/Contents/Resources/mlx-swift_Cmlx.bundle/default.metallib VOICETYPE_SMOKE_AUDIO=/tmp/voicetype-smoke.aiff swift test --skip-build --filter LocalModelSmokeTests`
 - Packaging failure test: `python3 -m unittest discover -s Tests/PackagingTests`
@@ -78,14 +83,3 @@ Quality continuation: run failing real-model grammar/correction checks; improve 
 - Run: `open /Applications/VoiceType.app`
 - Logs: `log stream --style compact --predicate 'subsystem == "com.nikti.VoiceType"'`
 - Manual matrix: short/long English and Russian; 20 consecutive takes; early hotkey release; Bluetooth connect/disconnect; 5/15 minute idle; sleep/wake; missing accessibility permission; history write failure; target app closes/switches.
-
-## Status
-Updated: 2026-10-28
-- Built: session-owned startup/recording/processing; cancellation-safe polish deadline; idle warmup; sample-rate-safe audio capture; guarded paste; delivery before history; stage timing; transactional packaging; cleanup fidelity fixes; audible cues; cross-app waveform panel; stable input routing.
-- Built quality update: Qwen3 4B Instruct; a full grammar editing prompt with transcript/data separation; explicit number/weekday repair preparation; short-take editing; facts/boundaries validation; known filenames and spoken quotation commands; readable paragraph fallback; trailing insertion space; rebuilt Parakeet encoder; reason-coded fallback logs.
-- Verified: all 78 checks pass with local-model and replay opt-ins enabled: 61 core checks and 17 integration checks, including fifteen editing fixtures. Coverage includes unavailable-model/native-normalization list paths, English/Russian editing, list negatives/fact preservation, saved-language/session consistency and technical filename replay. Packaging failure test passes separately.
-- Measured on this Apple M5/24 GB: editing about 0.4–1.9s for shorter prose and 3.46s for the 100-word proposal; literal filename about 2ms. New encoder replay about 0.14–0.25s after load. Peak MLX allocation 2.89 GB, not whole-app RAM. These figures exclude live microphone, insertion, Bluetooth, idle and sleep/wake behavior.
-- Duration followup: reproduced "Make a ten second video" → "Make 12th video" directly in the native NeMo formatter. Unambiguous duration spans are now normalized separately and protected during sentence normalization; genuine ordinals and unrelated normalization stay intact. This fixes the shared recognition stage without changing either cleanup mode's rules.
-- List followup: explicit sequential English/Russian markers get colon/numbered-line formatting before editing; fallback cleans each item separately. Recognition now uses clause boundaries, rather than requiring keywords such as "list" in the introduction; the exact "We're gonna need three things happen" fixture passes. Validation protects each item's facts. Ordinary/incomplete/quoted sequences remain prose.
-- Language followup: persisted Auto/English/Russian preference reaches the recognition call and stays fixed for each take. Synthetic "spec dot pie file" returns `Spec.py file` in Auto and English; this does not reproduce or explain the user's microphone failure. Native app accessibility inspection times out, so the new Preferences control is not visually verified. Use transactional packaging; `.build/release-verification.json` records the installed build.
-- Watch out for: the bundle is ad-hoc signed, so replacing it can require Accessibility permission to be enabled again.

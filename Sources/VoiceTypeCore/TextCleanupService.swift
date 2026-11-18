@@ -358,42 +358,6 @@ public enum TextCleanupService {
         return result
     }
 
-    /// Rule-based contraction expansion used as LLM fallback.
-    public static func applyGrammarRules(_ text: String) -> String {
-        var result = text
-        let contractions = [
-            #"\bdo not\b"#: "don't",
-            #"\bdoes not\b"#: "doesn't",
-            #"\bdid not\b"#: "didn't",
-            #"\bcan not\b"#: "can't",
-            #"\bcannot\b"#: "can't",
-            #"\bwill not\b"#: "won't",
-            #"\bwould not\b"#: "wouldn't",
-            #"\bshould not\b"#: "shouldn't",
-            #"\bcould not\b"#: "couldn't",
-            #"\bI am\b"#: "I'm",
-            #"\bI have\b"#: "I've",
-            #"\bI will\b"#: "I'll",
-            #"\bI would\b"#: "I'd",
-            #"\byou are\b"#: "you're",
-            #"\bwe are\b"#: "we're",
-            #"\bthey are\b"#: "they're",
-            #"\bit is\b"#: "it's",
-            #"\bthat is\b"#: "that's",
-            #"\bwhat is\b"#: "what's",
-            #"\bwhere is\b"#: "where's",
-            #"\bhow is\b"#: "how's",
-            #"\blet us\b"#: "let's",
-        ]
-        for (pattern, replacement) in contractions {
-            if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-                let range = NSRange(result.startIndex..<result.endIndex, in: result)
-                result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: replacement)
-            }
-        }
-        return collapseWhitespace(result)
-    }
-
     // MARK: - Language detection
 
     public struct DetectedLanguage: Sendable, Equatable {

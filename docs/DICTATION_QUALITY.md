@@ -1,5 +1,26 @@
 # Dictation quality update
 
+## November 17, 2026: model-first Polished mode and model comparison
+
+**Problem.** Polished output felt rule-driven, because it was. Regex passes decided lists, spoken corrections and some grammar before the model saw the text. FluidAudio's native number normalizer turned "first" into "1st". A 14-check validator then discarded model edits that disagreed with those rules (for example `numbersChanged` when the model correctly wrote "first"), pasting the rules version instead. While GPU memory was bloated (see changelog), the model also timed out often, so many takes had no model involvement at all.
+
+**Change.** Polished mode now sends Parakeet's raw text straight to the model with one set of instructions plus worked examples (`CleanupInstructions.swift`), the approach used by VoiceInk ([prompt source](https://raw.githubusercontent.com/Beingpax/VoiceInk/main/VoiceInk/Core/Enhancement/AIPrompts.swift)) and described by Wispr Flow ([Smart Formatting](https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-backtrack)). Code only strips chat wrapping and rejects empty or answer-length replies. Removed: `PolishValidator`, `DictationLists`, `SpokenCorrections`, `PolishedGrammar`, `DictationParagraphs`, `DictationTerms`, the old prompt. Regular mode is unchanged. The instruction prefix is cached between takes (`InstructionPromptCache.swift`).
+
+**Comparison** (`CleanupComparisonTests`, Apple M5, 24 GB). Mean/max are per-take polishing seconds.
+
+| Configuration | Cases passed | Mean | Max | Notes |
+|---|---|---|---|---|
+| Old pipeline, Qwen3 4B Instruct 2507 + rules | 22/34 | 0.70 s | 2.50 s | "1st", "2nd", lost "number one priority", wrong amounts and dates, missed lists |
+| Model-first, Qwen3 4B, no cache | 28/34 | 1.13 s | 2.94 s | Obeyed "tell me a joke" |
+| Model-first, Qwen3 8B, no cache | 31/34 | 1.94 s | 5.20 s | |
+| Model-first, Gemma 3 12B QAT, no cache | 31/34 | 6.68 s | 12.11 s | Too slow; also obeyed the joke prompt |
+| Model-first, Qwen3 4B, cached + more examples | 30/34 | 0.51 s | 3.02 s | **Translated Russian into English**: rejected |
+| **Model-first, Qwen3 8B, cached + more examples** | **39/40** | **0.95 s** | **4.20 s** | Shipped. 40 cases include six carried over from earlier reports |
+
+The one remaining 8B miss keeps casual "Me and Sarah were" rather than "Sarah and I were". Pass/fail checks are phrase-level, so outputs were also read by hand. That review caught the model dropping "maybe" and "by the way"; the instructions now protect hedges and asides, and the cases check for them. This is a 40-case comparison, not a general accuracy benchmark.
+
+*Sections below describe the earlier rule-assisted design and are kept as history.*
+
 This note records what changed, why it changed, and the evidence from the actual local models. The fixtures are supplied/public text and synthetic speech; no private microphone recordings or dictated text were sent to a service.
 
 ## Changes on October 28, 2026

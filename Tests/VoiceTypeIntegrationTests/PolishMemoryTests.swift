@@ -24,7 +24,7 @@ final class PolishMemoryTests: XCTestCase {
             try? files.removeItem(at: directory)
         }
 
-        let model = LLMService(polishBudget: .seconds(30))
+        let model = LLMService(minimumWait: .seconds(30))
         model.setEnabled(true)
         defer { model.setEnabled(false) }
         let loadDeadline = ContinuousClock.now.advanced(by: .seconds(300))
@@ -36,13 +36,13 @@ final class PolishMemoryTests: XCTestCase {
         while model.isInferenceBusy { try await Task.sleep(for: .milliseconds(50)) }
 
         let sentence = "so um we need to check the budget and the deadline before friday and then send it to the client "
-        _ = try await model.processPolished(sentence)
+        _ = await model.cleanUpWithModel(sentence)
         let baseline = Memory.snapshot()
 
         // Different lengths make differently sized GPU buffers, which is what fills the cache in real use.
         for take in 1...20 {
             let text = String(repeating: sentence, count: take % 7 + 1)
-            _ = try await model.processPolished(text)
+            _ = await model.cleanUpWithModel(text)
         }
         let after = Memory.snapshot()
         let megabyte = 1024 * 1024

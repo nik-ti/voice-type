@@ -270,18 +270,19 @@ class AppState: ObservableObject {
         timing.mark("recording_stopped")
 
         do {
-            let text = try await transcriptionService.transcribe(buffer, language: recordingLanguage)
+            let rawText = try await transcriptionService.transcribe(buffer, language: recordingLanguage)
             timing.mark("transcription")
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 showError("No speech detected. Please try again.")
                 return
             }
-            let detected = TextCleanupService.detectLanguage(from: text)
-            var finalText = LLMService.shared.basicFormat(text, language: detected.cleanupLanguage)
+            let detected = TextCleanupService.detectLanguage(from: rawText)
+            let regularText = Self.regularCleanup(rawText, language: detected.cleanupLanguage)
             timing.mark("basic_cleanup")
+            var finalText = regularText
             if polish {
                 isPolishing = true
-                finalText = try await LLMService.shared.processPolished(finalText, language: detected.cleanupLanguage)
+                finalText = await LLMService.shared.processPolished(rawText, regularFallback: regularText)
                 isPolishing = false
             }
             timing.mark("polishing")
@@ -306,6 +307,11 @@ class AppState: ObservableObject {
         } catch {
             showError("Transcription failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Regular mode, and Polished mode's fallback: fixed number and punctuation rules, no model.
+    static func regularCleanup(_ rawText: String, language: TextCleanupService.Language) -> String {
+        TextCleanupService.basicFormat(TranscriptNormalizer.normalize(rawText), language: language)
     }
 
     // MARK: - Sound Feedback

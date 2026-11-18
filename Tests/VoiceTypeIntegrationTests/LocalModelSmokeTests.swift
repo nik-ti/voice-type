@@ -58,8 +58,8 @@ final class LocalModelSmokeTests: XCTestCase {
             }
             XCTAssertFalse(model.isInferenceBusy)
             let started = ContinuousClock.now
-            let result = try await model.processPolished(
-                "Please send the meeting notes tomorrow morning and include the project timeline.", language: .english)
+            let result = await model.processPolished(
+                "Please send the meeting notes tomorrow morning and include the project timeline.", regularFallback: "")
             let elapsed = started.duration(to: .now)
             XCTAssertLessThan(elapsed, .milliseconds(2500))
             XCTAssertTrue(result.lowercased().contains("meeting notes"))
